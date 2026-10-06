@@ -13,6 +13,8 @@ from context_hide.store import MemoryContextStore
 from context_hide.summary import (
     LFMSummarizer,
     SummarizerConfig,
+    _PLAIN_RESULT_PROMPT,
+    _SYSTEM_PROMPT,
     validate_summary_text,
 )
 from context_hide.transport import LFMUnavailable
@@ -59,6 +61,8 @@ def test_summary_prompt_payload_untrusted_isolation():
 
     summarizer = LFMSummarizer(generate=generate, config=SummarizerConfig())
     count: list[int] = []
+
+    # 1. Unstructured text route (plain string source)
     summary = asyncio.run(
         summarizer.summarize(
             _source(),
@@ -73,14 +77,56 @@ def test_summary_prompt_payload_untrusted_isolation():
     assert len(calls) == 1
     request = calls[0]
     assert request["model"] == "lfm2.5-thinking:latest"
+    assert request["temperature"] == 0
+    assert request["reasoning"] == {"effort": "none"}
     assert request["response_format"]["type"] == "json_schema"
     assert request["messages"][0]["role"] == "system"
+    assert request["messages"][0]["content"] == _PLAIN_RESULT_PROMPT
     assert "untrusted" in request["messages"][0]["content"].lower()
 
-    user_payload = json.loads(request["messages"][1]["content"].split("\n\n", 1)[1])
-    assert user_payload["result"]["source"] == _source()
-    assert set(user_payload) == {"result", "required_evidence"}
+    unstructured_content = request["messages"][1]["content"]
+    assert "\n\n" not in unstructured_content
+    user_payload = json.loads(unstructured_content)
+    assert user_payload["source"] == _source()
+    assert set(user_payload) == {"source", "required_evidence"}
     assert user_payload["required_evidence"] == list(_evidence())
+    assert "INVOCATION" not in json.dumps(request)
+
+    # 2. Structured result route (dict output / JSON envelope source)
+    structured_raw = json.dumps({
+        "output": "sample-addon package exposes a registry.\n12 synthetic checks passed; exit code 0.",
+        "exit_code": 0,
+    })
+    summary_struct = asyncio.run(
+        summarizer.summarize(
+            structured_raw,
+            (),
+            lambda: count.append(2),
+            invocation=INVOCATION,
+        )
+    )
+
+    assert summary_struct == SUMMARY
+    assert count == [1, 2]
+    assert len(calls) == 2
+    req_struct = calls[1]
+    assert req_struct["model"] == "lfm2.5-thinking:latest"
+    assert req_struct["temperature"] == 0
+    assert req_struct["reasoning"] == {"effort": "none"}
+    assert req_struct["response_format"]["type"] == "json_schema"
+    assert req_struct["messages"][0]["role"] == "system"
+    assert req_struct["messages"][0]["content"] == _SYSTEM_PROMPT
+    assert "untrusted" in req_struct["messages"][0]["content"].lower()
+    assert req_struct["messages"][1]["content"].startswith("Write factual findings as JSON.\n\n")
+
+    structured_payload = json.loads(req_struct["messages"][1]["content"].split("\n\n", 1)[1])
+    assert structured_payload["result"]["source"] == {
+        "output": "sample-addon package exposes a registry.\n12 synthetic checks passed; exit code 0.",
+        "exit_code": 0,
+    }
+    assert set(structured_payload) == {"result", "required_evidence"}
+    assert structured_payload["required_evidence"] == []
+    assert "INVOCATION" not in json.dumps(req_struct)
 
 
 def test_summary_schema_strictness_and_boundaries():
