@@ -15,6 +15,7 @@ from context_hide.model import (
     compute_sha256,
 )
 from context_hide.transport import SummarizerError
+from context_hide.store import MemoryContextStore
 
 
 def _make_record(
@@ -134,6 +135,28 @@ def test_engine_unhide_restores_visibility_without_reexecution():
     # Unhidden item produces no replacement plan (original remains in transcript)
     plans_after = engine.project(scope, [record])
     assert plans_after == []
+
+
+def test_engine_hide_unhide_hide_replaces_existing_item_within_budget():
+    scope = Scope("bridge", "test", "sess_rehide")
+    record = _make_record(_long_content())
+    probe = ContextHideEngine().hide_sync(scope, record)
+    assert probe.ok and probe.item is not None
+
+    store = MemoryContextStore(max_bytes=MemoryContextStore._item_size(probe.item))
+    engine = ContextHideEngine(store=store)
+    first = engine.hide_sync(scope, record)
+    assert first.ok and first.item is not None
+
+    unhidden = engine.unhide(scope, first.item.item_id)
+    assert unhidden.ok and unhidden.item is not None
+    assert unhidden.item.version == first.item.version + 1
+
+    rehidden = engine.hide_sync(scope, record)
+
+    assert rehidden.ok and rehidden.item is not None
+    assert rehidden.item.visibility == "compacted"
+    assert rehidden.item.version == unhidden.item.version + 1
 
 
 def test_engine_project_generates_replacement_plans_for_compacted_items():

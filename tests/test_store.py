@@ -80,6 +80,93 @@ def test_store_size_accounting_and_store_full():
     assert res2.error == "store_full"
 
 
+def test_store_put_equal_size_replacement_uses_only_incremental_capacity():
+    item = _sample_item(item_id="item_equal")
+    size = MemoryContextStore._item_size(item)
+    store = MemoryContextStore(max_bytes=size)
+
+    assert store.put("scope_equal", item).ok
+    updated = replace(item, visibility="original", version=2)
+    result = store.put("scope_equal", updated)
+
+    assert result.ok
+    assert result.item == updated
+    assert store.used_bytes == size
+
+
+def test_store_put_smaller_replacement_releases_unused_capacity():
+    item = _sample_item(item_id="item_smaller", original="x" * 128)
+    smaller = replace(item, original="x" * 64, version=2)
+    store = MemoryContextStore(max_bytes=MemoryContextStore._item_size(item))
+
+    assert store.put("scope_smaller", item).ok
+    result = store.put("scope_smaller", smaller)
+
+    assert result.ok
+    assert store.used_bytes == MemoryContextStore._item_size(smaller)
+
+
+def test_store_put_larger_replacement_at_exact_capacity():
+    item = _sample_item(item_id="item_larger", original="x" * 64)
+    larger = replace(item, original="x" * 96, version=2)
+    capacity = MemoryContextStore._item_size(larger)
+    store = MemoryContextStore(max_bytes=capacity)
+
+    assert store.put("scope_larger", item).ok
+    result = store.put("scope_larger", larger)
+
+    assert result.ok
+    assert result.item == larger
+    assert store.used_bytes == capacity
+
+
+def test_store_put_oversize_replacement_preserves_original_and_ttl():
+    item = _sample_item(item_id="item_oversize", expires_at=time.monotonic() + 500.0)
+    store = MemoryContextStore(max_bytes=MemoryContextStore._item_size(item) + 8)
+    assert store.put("scope_oversize", item).ok
+    before = store.used_bytes
+    oversized = replace(item, original="x" * 1000, version=9, expires_at=900.0)
+
+    result = store.put("scope_oversize", oversized)
+
+    assert not result.ok and result.error == "store_full"
+    assert store.get("scope_oversize", item.item_id) == item
+    assert store.used_bytes == before
+
+
+def test_store_put_replacement_does_not_evict_unrelated_live_item():
+    item = _sample_item(item_id="item_keep", original="x" * 64)
+    unrelated = _sample_item(item_id="item_unrelated", original="y" * 64)
+    capacity = MemoryContextStore._item_size(item) + MemoryContextStore._item_size(unrelated)
+    store = MemoryContextStore(max_bytes=capacity)
+    assert store.put("scope_keep", item).ok
+    assert store.put("scope_keep", unrelated).ok
+    before = store.used_bytes
+    too_large = replace(item, original="x" * 65, version=2)
+
+    result = store.put("scope_keep", too_large)
+
+    assert not result.ok and result.error == "store_full"
+    assert store.get("scope_keep", item.item_id) == item
+    assert store.get("scope_keep", unrelated.item_id) == unrelated
+    assert store.used_bytes == before
+
+
+def test_store_put_replacement_after_expiration_uses_freed_capacity():
+    current_time = [100.0]
+    old = _sample_item(item_id="item_expired_replace", original="x" * 64, expires_at=101.0)
+    new = replace(old, original="x" * 128, expires_at=200.0, version=2)
+    store = MemoryContextStore(max_bytes=MemoryContextStore._item_size(new), clock=lambda: current_time[0])
+    assert store.put("scope_expired_replace", old).ok
+
+    current_time[0] = 102.0
+    result = store.put("scope_expired_replace", new)
+
+    assert result.ok
+    assert store.get("scope_expired_replace", old.item_id) == new
+    assert store.used_bytes == MemoryContextStore._item_size(new)
+
+
 def test_store_reserve_and_release():
     store = MemoryContextStore()
     scope = "scope_reserve"
