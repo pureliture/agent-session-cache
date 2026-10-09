@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from adapters.hermes.payload import find_tool_results
+from .payload import find_tool_results
 
 TimeFunc = Callable[[], float]
 

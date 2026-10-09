@@ -45,7 +45,7 @@ packages = ["src/context_hide"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", "."]
+pythonpath = ["src"]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]

@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from adapters.hermes.allowlist import AdapterRejected, filter_invocation
-from adapters.hermes.payload import UNSUPPORTED_API_MODE, apply_replacements
-from adapters.hermes.session import SessionTranscriptStore
+from .allowlist import AdapterRejected, filter_invocation
+from .payload import UNSUPPORTED_API_MODE, apply_replacements
+from .session import SessionTranscriptStore
 from context_hide.engine import ContextHideEngine
 from context_hide.model import (
     MutationResult,

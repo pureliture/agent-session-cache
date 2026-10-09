@@ -7,11 +7,17 @@ from __future__ import annotations
 
 import json
 
-from adapters.hermes import handlers
-from adapters.hermes.allowlist import AdapterRejected, filter_invocation
-from adapters.hermes.session import SessionTranscriptStore
+from _adapter_loader import hermes_adapter as _load_hermes_adapter
 from context_hide.engine import ContextHideEngine
 from context_hide.model import Scope
+
+_adapter = _load_hermes_adapter()
+handlers = _adapter.handlers
+_allowlist = _adapter.allowlist
+_session_mod = _adapter.session
+AdapterRejected = _allowlist.AdapterRejected
+filter_invocation = _allowlist.filter_invocation
+SessionTranscriptStore = _session_mod.SessionTranscriptStore
 
 
 def _long_body() -> str:
