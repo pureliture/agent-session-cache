@@ -15,9 +15,9 @@
 |---|---|---|---|
 | S1 | Native plugin 후보 (manifest + register export + 엔진 import + wheel) | DONE | 실제 Hermes 매니페스트 파서와 로더 계약을 만족하는 후보 |
 | S2 | 어댑터 계약 정합화 (공존 판정·설명 정정) | DONE | 등록 성공이 아닌 실제 전송 요청 기준 계약 일치 |
-| S3 | 분리 환경 실제 PluginContext 통합 시험 | ACTIVE | 숨김→조회→복원이 실제 전송 payload에서 관측 |
-| S4 | 대상 프로필 설치·활성화 | pending | 한 프로필에서만 도구 노출, 비대상 무영향 |
-| S5 | 실제 provider 요청 교체·복원 반복 | pending | 숨긴 뒤 요청이 짧아지고 복원 뒤 원문 바이트·해시 일치 |
+| S3 | 분리 환경 실제 PluginContext 통합 시험 | DONE | 숨김→조회→복원이 실제 전송 payload에서 관측 |
+| S4 | 대상 프로필 설치·활성화 | DONE | 한 프로필에서만 도구 노출, 비대상 무영향 |
+| S5 | 실제 provider 요청 교체·복원 반복 | DONE | 숨긴 뒤 요청이 짧아지고 복원 뒤 원문 바이트·해시 일치 (2회 반복) |
 | S6 | 롤백·최종 인계 | pending | 대상 원래 동작, 비대상 변화 없음 |
 
 ## Active slice evidence — S2 DONE
@@ -196,7 +196,8 @@ base `main` `8e85a4a4d0ee28e24e4884f62191aae966c90619`. Uncommitted, no push.
 
 - **Live session:** `20261011_233013_544841` (default profile, model
   `step-5-preview-free` via opencode-go), resumed with the three tool steps.
-  Trace: `hide=ok list=1 unhide=ok`.
+  Trace: `hide=ok list=1 unhide=ok`; a second resume repeated the same
+  hide→list→unhide cycle with the same result.
 - **Defect found by the first live attempt:** `hide_context` returned
   `verification_failed`. Cause: real host tool results ride as single-line JSON
   envelopes (`read_file`: `{"content": "1|..\n2|.."}` with ESCAPED newlines;
@@ -214,12 +215,17 @@ base `main` `8e85a4a4d0ee28e24e4884f62191aae966c90619`. Uncommitted, no push.
 - **Deployed-plugin drive (no provider):** hide ok → second transmission
   1395 → 1161 bytes with the item id → list count 1 → unhide ok → restored
   byte-identical.
-- **Real request-dump evidence (the live session, chronological):**
-  17 transmissions carry the raw 3795-byte envelope; after `hide_context` the
-  next 4 transmissions carry the 1071-byte replacement
-  (`[hidden:item_67076f438c7213b6]` + excerpts); after `unhide_context` the
-  following transmission carries the raw 3795 bytes again, byte-identical.
-  **Shrink 3795 → 1071 bytes (71.8 %).**
+- **Real request-dump evidence (27 dumps, two full cycles):** cycle 1 — 15
+  dumps carry the raw 3795-byte envelope; after `hide_context` the next 3
+  dumps carry the 1071-byte replacement (`[hidden:item_67076f438c7213b6]` +
+  excerpts); after `unhide_context` the raw 3795 bytes ride again. Cycle 2
+  repeated the pattern (3 raw → 2 replacement → raw again). Across all 27
+  dumps: 20 raw / 5 replacement; both cycles restore byte-identically
+  (SHA-256 `c25d838803eb8a78e359b025e6aca9e92754adbb13c6b8d6be16608aa3144619`
+  unchanged). **Shrink 3795 → 1071 bytes (71.8 %).**
+- **Transient blocker (recovered, no workaround):** opencode-go intermittently
+  returned HTTP 429 (`Endpoint is unavailable`) during live runs; retries
+  recovered on their own — no fallback provider or code workaround was added.
 - **Regression:** 164 passed, 4 skipped, twice, exit 0
   (`artifacts/envelope-full-3.log`, `artifacts/envelope-full-4.log`).
 - **Host-env support fix riding along:** `store.py` falls back to the pinned
