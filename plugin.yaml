@@ -1,0 +1,18 @@
+name: context-hide
+version: 0.1.0
+manifest_version: 1
+description: Request-side tool-result summarization for Hermes sessions. Replaces large already-transmitted tool results with short summaries on the outgoing request copy only; the model restores originals through unhide_context.
+author: Context Hide Contributors
+license: MIT
+homepage: https://github.com/pureliture/agent-session-cache
+kind: standalone
+provides_tools:
+  - hide_context
+  - list_context_items
+  - unhide_context
+
+config_schema:
+  enabled:
+    type: bool
+    default: false
+    description: Enable hiding and request rewriting. Keep false until a verified session turns it on.

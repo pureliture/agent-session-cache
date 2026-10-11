@@ -134,7 +134,7 @@ def test_session_expiry_forgets_quiet_scopes():
     store = SessionTranscriptStore(ttl_seconds=60, time_func=lambda: now[0])
     state = plugin.PluginState(store=store,
                                is_enabled=lambda: True,
-                               count_middlewares=lambda: 1)
+                               count_middlewares=lambda: 0)  # sole middleware
     scope = plugin.scope_for(state, "sess-ttl")
     assert scope is not None
     body = _long_body()
@@ -217,7 +217,7 @@ def test_first_version_is_rule_only_no_external_call():
     assert listed["items"][0]["source"] == "rule"
 
 
-def test_default_middleware_counter_degrades_to_single_owner():
+def test_default_middleware_counter_degrades_to_no_others() -> None:
     # Outside a Hermes process the lazy host import fails and must fall
-    # back to 1 ("no evidence of others") instead of raising.
-    assert plugin._default_count_llm_middlewares() == 1
+    # back to 0 ("no evidence of others") instead of raising.
+    assert plugin._default_count_llm_middlewares() == 0

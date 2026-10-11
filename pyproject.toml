@@ -41,7 +41,20 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/context_hide"]
+packages = ["src/context_hide", "adapters/hermes"]
+
+# The wheel ships ``adapters/hermes`` under the ``context_hide_hermes`` import
+# name so a bare ``hermes`` package never shadows another provider's package.
+
+# Editable installs cannot rewrite a package prefix (editables issue #20), so
+# the local dev environment binds the source directories under their real names.
+# ``uv sync --frozen`` therefore installs this project NON-editable.
+[tool.hatch.build.targets.editable]
+packages = ["src/context_hide", "adapters/hermes"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"__init__.py" = "context_hide_plugin_root/__init__.py"
+"plugin.yaml" = "context_hide_plugin_root/plugin.yaml"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

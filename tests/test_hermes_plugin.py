@@ -201,10 +201,31 @@ def test_hide_missing_target_and_unknown_item():
                               session_id="sess-x"))["ok"] is False
 
 
-def test_coexistence_records_but_does_not_apply():
+def test_count_middlewares_counts_others_not_self() -> None:
+    """The probe counts OTHER callbacks, so 0 means "we are the only one"."""
+    assert plugin._default_count_llm_middlewares.__doc__
+    # Host import fails in a bare test process -> 0, not 1.
+    assert plugin._default_count_llm_middlewares() == 0
+    state = plugin.PluginState()
+    assert state.count_middlewares() == 0
+    ctx = _enabled_ctx()
+    registered = plugin.register(ctx)
+    registered.count_middlewares = lambda: 1  # one other middleware exists
+    mw = ctx.middlewares["llm_request"][0]
+    body = _long_body()
+    out = mw(**_mw_kwargs(_codex_request(body), "sess-other", "codex_responses"))
+    # Recorded for the tools, but the outgoing request is NOT rewritten.
+    assert out["reason"] == "other_middleware_present"
+    assert out["request"]["input"][1]["output"] == body
+    hidden = json.loads(ctx.tools["hide_context"]["handler"](
+        {"tool_call_id": "call_1"}, session_id="sess-other"))
+    assert hidden["ok"] is True, "recording must still feed the tool handlers"
+
+
+def test_coexistence_records_but_does_not_apply() -> None:
     ctx = _enabled_ctx()
     state = plugin.register(ctx)
-    state.count_middlewares = lambda: 2
+    state.count_middlewares = lambda: 1  # one OTHER middleware exists
     mw = ctx.middlewares["llm_request"][0]
     body = _long_body()
     out = mw(**_mw_kwargs(_codex_request(body), "sess-coex", "codex_responses"))

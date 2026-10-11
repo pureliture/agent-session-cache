@@ -163,20 +163,32 @@ def bridge_should_yield(tool_names: Any) -> bool:
 
 
 def _default_count_llm_middlewares() -> int:
-    """Count registered `llm_request` middlewares, 1 when unknowable.
+    """Count the OTHER registered `llm_request` middleware callbacks.
 
-    Runs inside the Hermes process, so a lazy host import is fine here
-    (the pure helpers stay host-free). Any import problem degrades to 1,
-    i.e. "no evidence of others", keeping single-owner behavior.
+    Verified on 2026-10-11 against the installed runtime
+    (``hermes_cli.middleware.apply_llm_request_middleware`` plus
+    ``PluginManager.invoke_middleware``): the request chain COMPOSES in
+    registration order -- each callback receives the previous callback's
+    payload, and the last dict returned under ``request`` is what the provider
+    sees. So a later middleware can overwrite our replacement and we can
+    overwrite theirs; the chain does not by itself guarantee a single hide
+    owner.
+
+    This probe therefore only reports how many OTHER callbacks exist. The
+    middleware reads that number and decides what to do (see
+    ``on_llm_request``). Runs inside the Hermes process, so a lazy host import
+    is fine here (the pure helpers stay host-free). Any import problem degrades
+    to 0 = "no evidence of others", which keeps the plugin's own behaviour
+    instead of silently withholding it.
     """
     try:
         from hermes_cli.plugins import _delivery_manager
 
         manager = _delivery_manager()
         middlewares = getattr(manager, "_middleware", {}).get("llm_request", [])
-        return len(middlewares)
+        return max(0, len(middlewares) - 1)
     except Exception:
-        return 1
+        return 0
 
 
 @dataclass
@@ -298,12 +310,14 @@ def make_middleware(state: PluginState) -> Callable[..., dict[str, Any] | None]:
             api_mode = kwargs.get("api_mode", "")
             if not isinstance(api_mode, str):
                 api_mode = ""
-            if state.count_middlewares() > 1:
-                # Another llm_request middleware is installed: each one
-                # receives the original request and only the last return
-                # value survives, so applying here could silently vanish.
-                # Record the transmission (tools still work) but leave
-                # this request untouched.
+            if state.count_middlewares() > 0:
+                # Another llm_request middleware is installed. The installed
+                # chain composes rewrites in registration order, so OUR
+                # replacement is not silently dropped -- but if we run first,
+                # a later middleware can still overwrite it, and if we run
+                # last we overwrite theirs. Report the situation instead of
+                # pretending single ownership: keep recording (tools keep
+                # working) but leave this request untouched.
                 stored, skipped, _error = state.store.record_request(
                     scope.scope_key(), api_mode, request)
                 logger.debug(
