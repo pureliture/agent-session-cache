@@ -8,6 +8,7 @@
 - **Plan:** `~/.hermes/profiles/atlas/workspace/.hermes/plans/2026-10-11_104747-context-hide-hermes-profile-pilot.md`
 - **Approved scope (user, 2026-10-11):** 구현·설치·활성화 진행. 적용 프로필은 `daedalus` 또는 `default` 중 하나. Atlas·다른 프로필 자동 확대 없음. Daedalus는 활성 후보이며, `default`는 추가 대상이 아닌 대체 후보로 남긴다. 프로필 확정은 사용자의 다음 지시가 필요할 수 있다.
 - **Authority boundary (unchanged):** 프로필 선택 변경, main 병합, pull request 생성, 전체 gateway 재시작, 브리지 재배포, 과금, 데이터 유실, 비가역 변경은 중단하고 승인을 요청한다. Non-goals: 양쪽 프로필 동시 적용, `atlas`/기타 프로필 적용, 유료 서비스, 외부 DB, LFM 요약기 본체 연결.
+- **Result (2026-10-12):** pilot COMPLETE — S1–S6 all DONE. Feature enabled in `default` only; commits local-only (no push/PR). Handoff: workspace `artifacts/2026-10-11/context-hide-hermes-pilot/final-result.md`.
 
 ## Slices
 
@@ -18,7 +19,7 @@
 | S3 | 분리 환경 실제 PluginContext 통합 시험 | DONE | 숨김→조회→복원이 실제 전송 payload에서 관측 |
 | S4 | 대상 프로필 설치·활성화 | DONE | 한 프로필에서만 도구 노출, 비대상 무영향 |
 | S5 | 실제 provider 요청 교체·복원 반복 | DONE | 숨긴 뒤 요청이 짧아지고 복원 뒤 원문 바이트·해시 일치 (2회 반복) |
-| S6 | 롤백·최종 인계 | pending | 대상 원래 동작, 비대상 변화 없음 |
+| S6 | 롤백·최종 인계 | DONE | 비활성 시 도구 미노출·원문 유지; 재활성 후 3번째 사이클 바이트 일치; 비대상 불변 |
 
 ## Active slice evidence — S2 DONE
 
@@ -232,3 +233,45 @@ base `main` `8e85a4a4d0ee28e24e4884f62191aae966c90619`. Uncommitted, no push.
   `context_hide._tlru.TLRUCache` when the host interpreter lacks `cachetools`;
   `src/` and `vendor/` are byte-identical and all three docs trees match the
   deployed plugin.
+
+## Active slice evidence — S6 DONE (rollback, re-activation, handoff)
+
+- **Feature-off rollback (fresh session):** with
+  `plugins.entries.context-hide.settings.enabled=false` and the plugin
+  disabled, session `20261012_003252_f59c4f` sees no hide tools
+  (`tool_describe` → `not_found`) and its `read_file` result rides the request
+  RAW (4 dumps, zero `[hidden:` markers). Reply: `S6 tool=missing read=ok`.
+  Probe: `context_hide loaded: False`, registry/selected empty, catalog 55
+  (vs 58 enabled), CLI platform toolset without `context_hide`
+  (`artifacts/s6-probe-disabled.log`).
+- **Re-activation (approved target only):** re-enabled via
+  `plugins enable context-hide --no-allow-tool-override` +
+  `settings.enabled true`; probe matches the pre-test state again
+  (`artifacts/s6-probe-reenabled.log` == `artifacts/s6-probe-before.log`,
+  catalog 58). First re-check session `20261012_004012_07ef5f` hit a
+  tool-argument validation error; the retry `20261012_004054_29eb72` resolves
+  the tool — reply `S6R tool=found`.
+- **Third full live cycle after re-activation:** resumed session
+  `20261011_233013_544841` → `DONE2 hide=ok list=1 unhide=ok`; dumps
+  `004304 RAW → 004307/004311 REPLACEMENT → 004314 RAW`; restore
+  byte-identical (raw SHA-256 `c25d8388…4619` unchanged; replacement 1071 B,
+  SHA-256 `bcc59b33…e7d3`). Session totals: 31 dumps = 22 raw / 7 replacement
+  / 2 pre-read (`artifacts/dump-accounting.txt`).
+- **Original history unchanged:** the stored `read_file` message in `state.db`
+  is still the raw 3795-byte envelope; the only `[hidden:` strings in stored
+  messages are inside the plugin's own `list_context_items` outputs (expected).
+- **Non-target profiles unchanged:** daedalus/atlas/tyche/metis/plutus/ariadne
+  have zero context-hide config or plugin dirs; the default config diff vs the
+  pre-feature backup is exactly the three intended keys (model, plugin,
+  toolset) plus the two CLI-normalized keys from re-enable
+  (`allow_tool_override: false`, empty `disabled: []`).
+- **Deployed tree hash unchanged across S6:**
+  `4bdf5cd3ad319321cadbe6ea4e947a5742514154be89ecd1ea50b67bd141fbe4`
+  (repo `vendor/` and deployed `vendor/` still byte-identical).
+- **Model calls (request dumps):** verification window 2026-10-11 22:25 →
+  2026-10-12 00:45 = 99 dumps total (incl. rate-limit retries); the final
+  success chain is session 233013 (31) + S6 sessions (4+5+3=12). Day pair
+  total 104.
+- **Handoff:** `final-result.md` in the workspace
+  (`artifacts/2026-10-11/context-hide-hermes-pilot/`); commits remain
+  local — push/PR and any other profile stay out of scope.
