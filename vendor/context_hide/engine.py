@@ -24,7 +24,7 @@ from context_hide.policy import (
     verified_facts,
 )
 from context_hide.store import MemoryContextStore, _item_id
-from context_hide.summary import validate_summary_text
+from context_hide.summary import selectable_text, validate_summary_text
 from context_hide.transport import Summarizer
 
 
@@ -95,7 +95,11 @@ class ContextHideEngine:
             return MutationResult(ok=False, error="store_full")
 
         # 4. Baseline Rule Excerpt check
-        baseline = RuleSpanSelector().select(record.content)
+        #    Selection reads the decoded view (result envelopes decoded, read_file
+        #    line numbers stripped); identity, hashing, and the payload replacement
+        #    keep using the raw string so stored SHA-256 and offsets are unchanged.
+        rule_source = selectable_text(record.content)
+        baseline = RuleSpanSelector().select(rule_source)
         if baseline is None:
             return MutationResult(ok=False, error="verification_failed")
 
@@ -106,6 +110,7 @@ class ContextHideEngine:
 
         try:
             required = required_evidence_lines(record.content)
+            rule_required = required_evidence_lines(rule_source)
             choice: SpanChoice | None = None
 
             # 6. Summarization attempt with rule fallback
@@ -156,8 +161,15 @@ class ContextHideEngine:
                 rendered = render_compaction(item_id, choice.lines)
 
             # Final Fail-Open check
-            if (not excerpts_are_exact(record.content, choice.lines)
-                    or any(line not in choice.lines for line in required)
+            #   A rule-path choice was selected from the decoded view, so it is
+            #   verified against that same text; an LFM choice still verifies
+            #   against the raw content it was summarized from.
+            if choice.source == "lfm":
+                check_source, check_required = record.content, required
+            else:
+                check_source, check_required = rule_source, rule_required
+            if (not excerpts_are_exact(check_source, choice.lines)
+                    or any(line not in choice.lines for line in check_required)
                     or len(rendered) >= len(record.content)):
                 return MutationResult(ok=False, error="verification_failed")
 

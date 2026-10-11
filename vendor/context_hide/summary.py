@@ -54,6 +54,8 @@ _IDENTIFIER_PATTERN = re.compile(
     r"(?i)\b(?:[0-9a-f]{8}-[0-9a-f-]{27,}|(?:id|uuid|sha256)\s*[:=]\s*[\w.-]+)"
 )
 
+_NUMBERED_LINE = re.compile(r"(\d+)\|(.*)")
+
 
 def _lossless_repeated_source(original: str) -> str | dict[str, Any]:
     """Expose every distinct verbatim line, retaining exact restore order via alphabet dictionary."""
@@ -102,6 +104,46 @@ restore_repeated_source = restore_lossless_source
 def is_lossless_encoded(source: Any) -> bool:
     """Check whether source is dictionary-encoded lossless payload."""
     return isinstance(source, dict) and "lossless_decode" in source
+
+
+def strip_consecutive_numbering(text: str) -> str:
+    """Drop ``N|`` line prefixes when every line is numbered consecutively.
+
+    ``read_file`` prefixes each returned line with its line number; the numbers
+    are transport noise, and the LFM packet already removes them. Rule-based
+    excerpt selection uses the same rule so both paths read the same text.
+    """
+    lines = text.splitlines()
+    numbered = [_NUMBERED_LINE.fullmatch(line) for line in lines]
+    if not numbered or not all(numbered):
+        return text
+    numbers = [int(match[1]) for match in numbered if match]
+    if numbers != list(range(numbers[0], numbers[0] + len(numbers))):
+        return text
+    return "\n".join(match[2] for match in numbered if match)
+
+
+def selectable_text(content: str) -> str:
+    """The text a reader sees for a tool-result envelope; ``content`` otherwise.
+
+    Hosts deliver tool results as single-line JSON envelopes whose newlines are
+    escaped (read_file: ``{"content": "1|..\\n2|.."}``; terminal:
+    ``{"output": "..", "exit_code": 0}``). Line-based excerpt selection can
+    never succeed on that raw form, so selection runs on this decoded view
+    while identity, hashing, and the payload replacement keep using the raw
+    string. Unrecognized shapes return the content unchanged (fail-open).
+    """
+    try:
+        obj = json.loads(content)
+    except ValueError:
+        return content
+    if not isinstance(obj, dict):
+        return content
+    for key in ("content", "output"):
+        value = obj.get(key)
+        if isinstance(value, str):
+            return strip_consecutive_numbering(value)
+    return content
 
 
 def prepare_result_source(original: str) -> str | dict[str, Any]:

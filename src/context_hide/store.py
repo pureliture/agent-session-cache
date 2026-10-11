@@ -10,7 +10,10 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
-from cachetools import TLRUCache
+try:  # prefer the real package when the host provides it
+    from cachetools import TLRUCache
+except ImportError:  # standalone/host environments without cachetools
+    from context_hide._tlru import TLRUCache
 
 from context_hide.model import (
     ContextItem,
