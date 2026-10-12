@@ -206,6 +206,7 @@ def test_session_bounds_ttl_and_capacity():
     }
     kept, _, _ = store.record_request(scope_a.scope_key(), "codex_responses", two_calls)
     assert len(kept) == 1
+    assert kept[0].call_id == "call_2"  # newest result stays: recent targets remain hideable
     store.record_request(scope_b.scope_key(), "codex_responses", _codex_request("body b"))
     store.record_request(scope_c.scope_key(), "codex_responses", _codex_request("body c"))
     assert len(store) == 2

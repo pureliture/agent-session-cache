@@ -114,7 +114,7 @@ class SessionTranscriptStore:
             {"host_handle": dict(item.host_handle), "reason": item.reason}
             for item in skipped
         ]
-        kept = stored[: self.max_results_per_session]
+        kept = stored[-self.max_results_per_session:]
         self._sessions[scope_key] = _SessionEntry(
             api_mode=api_mode, updated_at=self._now(), results=kept)
         while len(self._sessions) > self.max_sessions:
