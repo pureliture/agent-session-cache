@@ -285,13 +285,18 @@ base `main` `8e85a4a4d0ee28e24e4884f62191aae966c90619`. Uncommitted, no push.
 - **Commits (local):** `7fd4968` docs → `97b954f` feat → probe+milestones 커밋
   (이 문서를 포함한 커밋; `git log` 참조).
 - **Tests:** `PYTHONPATH= ./.venv/bin/python -m pytest tests/ -q -p no:cacheprovider`
-  → **210 passed / 4 skipped** (baseline `dbcd978`: 202/4). Hermes 소스 루트를
+  → **215 passed / 4 skipped** (baseline `dbcd978`: 202/4). Hermes 소스 루트를
   PYTHONPATH에 둔 제한 실행에서 `hermes_yaml` 계약 3건 해제 →
   `test_hermes_package` + `test_hermes_runtime_integration` 14 passed / 1 skipped
   (hatchling 없음, 기존 스킵).
 - **Real PluginManager probe (`tools/probe_supervision.py`): VERDICT PASS** —
   임시 `HERMES_HOME`에서 실제 매니저가 도구 3종 + `llm_request` 1개 +
-  섹션(487자)을 로드, hide → list(`hidden_count=1`, `display_number=1`,
-  `original_bytes_size=8879`, `hidden_at=…Z`) → unhide(`hidden_count=0`) 확인.
+  섹션(575자)을 로드, hide → list(`hidden_count=1`, `display_number=1`,
+  `original_bytes_size=8879`, `hidden_at=…Z`) → `unhide("1번")`이 그 목록의
+  1번 항목으로 해석되어 `hidden_count=0` 확인.
+- **번호 참조는 모델 기억에 의존하지 않음(코드 해석):** 사용자가 "N번"이라고
+  하면 어댑터가 마지막 목록 결과의 번호 스냅샷으로 해석한다. 실패는
+  fail-closed(`no_recent_list`, `unknown_display_number`). 자연어 연결의
+  잔여 확인은 배포 후 통합 시나리오.
 - **경계:** A안은 같은 프로세스 메모리·도구 호출 시에만 동작. 설치본 동기화,
   재시작, 통합 수동 시나리오 실행은 Atlas. push/PR 없음.

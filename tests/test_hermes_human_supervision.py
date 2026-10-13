@@ -228,3 +228,63 @@ def test_tool_descriptions_route_human_list_and_restore_requests():
     assert "사용자" in list_desc and "보여" in list_desc
     assert "복원" in unhide_desc and "item_id" in unhide_desc
     assert "목록" in unhide_desc
+
+
+def test_unhide_description_routes_number_references_verbatim():
+    desc = plugin.TOOL_SCHEMAS["unhide_context"]["description"]
+    assert "번" in desc and "그대로" in desc
+
+
+def test_numeric_reference_resolves_against_the_last_shown_list():
+    state = _state()
+    first = _hide(state, "call_1", _body("alpha"))
+    second = _hide(state, "call_2", _body("beta"))
+    shown = _list(state)
+    assert [i["item_id"] for i in shown["items"]] == [second["item_id"], first["item_id"]]
+    assert [i["display_number"] for i in shown["items"]] == [1, 2]
+
+    restored = _unhide(state, "2번")  # digits + suffix resolve, no ID recall
+    assert restored["ok"] is True
+    assert restored["item_id"] == first["item_id"]
+
+    # The shown numbers stay stable until the NEXT list call: "1" still names
+    # what the user saw as #1, never a number a fresh list would issue.
+    late = _unhide(state, "#1")
+    assert late["ok"] is True
+    assert late["item_id"] == second["item_id"]
+
+
+def test_numeric_reference_fails_closed_without_a_shown_list():
+    state = _state()
+    hidden = _hide(state, "call_1")
+    blocked = _unhide(state, "1")
+    assert blocked["ok"] is False and blocked["error"] == "no_recent_list"
+    # An exact item_id still works without any prior list call.
+    exact = _unhide(state, hidden["item_id"])
+    assert exact["ok"] is True
+
+
+def test_numeric_reference_out_of_range_and_after_new_list():
+    state = _state()
+    _hide(state, "call_1")
+    _list(state)
+    bad = _unhide(state, "9")
+    assert bad["ok"] is False and bad["error"] == "unknown_display_number"
+
+    stale = _unhide(state, "1")
+    assert stale["ok"] is True
+    _list(state)  # fresh view: nothing hidden, no numbers
+    missing = _unhide(state, "1")
+    assert missing["ok"] is False and missing["error"] == "unknown_display_number"
+
+
+def test_numeric_reference_keeps_working_after_a_restore():
+    state = _state()
+    _hide(state, "call_1", _body("alpha"))
+    second = _hide(state, "call_2", _body("beta"))
+    _list(state)  # 1 = second, 2 = first
+
+    first_restore = _unhide(state, "1")
+    assert first_restore["item_id"] == second["item_id"]
+    second_restore = _unhide(state, " 2 ")  # surrounding whitespace tolerated
+    assert second_restore["ok"] is True

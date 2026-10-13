@@ -97,14 +97,17 @@ SUPERVISION_SECTION_TEXT = (
     "context-hide 도구는 사용자의 세션 채팅 요청에 따라 숨김 상태를 "
     "확인·복원할 때 쓴다. 사용자가 '숨김 목록 보여줘'처럼 요청하면 "
     "list_context_items를 호출해 숨김 항목만 골라 표시 번호(1부터), 도구, "
-    "원문 크기, 숨김 시각, 한 줄 요약이 담긴 표로 보여준다. 번호는 목록마다 "
-    "새로 부여되므로 사용자에게 보여준 표의 번호와 item_id를 기억하고, "
-    "'N번 복원해' 요청이 오면 복원 직전에 list_context_items로 목록을 다시 "
-    "확인해 같은 item_id인지 검증한 뒤 unhide_context(item_id)를 호출하고 "
-    "결과를 목록으로 다시 확인한다. '전부 되돌려'는 필터 없는 목록에서 숨김 "
-    "item_id를 먼저 고정한 뒤 한 건씩 복원한다. 숨김이 0건이면 '현재 숨겨진 "
-    "항목 없음'이라고만 말한다. 재시작 여부를 모를 때 원인을 단정하지 않는다. "
-    "숨김 상태는 같은 프로필·세션·프로세스에서만 보이고 재시작하면 사라진다."
+    "원문 크기, 숨김 시각, 한 줄 요약이 담긴 표로 보여준다. 'N번 복원해' "
+    "요청이 오면 번호를 item_id로 바꾸려 하지 말고 사용자가 말한 숫자를 "
+    "그대로 unhide_context의 item_id 자리에 넘긴다 — 도구가 마지막으로 "
+    "반환한 목록의 N번으로 해석한다. 정확한 item_id를 알면 그대로 쓴다. "
+    "목록을 보여준 직후에는 다시 조회하지 않는다(재조회는 번호 기준을 "
+    "바꾼다). 오류 no_recent_list면 목록을 먼저 보여주고, "
+    "unknown_display_number면 새 목록을 보여주고 다시 선택받는다. "
+    "'전부 되돌려'는 필터 없는 목록에서 숨김 item_id를 고정한 뒤 한 건씩 "
+    "복원한다. 숨김이 0건이면 '현재 숨겨진 항목 없음'이라고만 말한다. "
+    "숨김 상태는 같은 프로필·세션·프로세스에서만 보이고 재시작하면 "
+    "사라진다. 재시작 여부를 모를 때 원인을 단정하지 않는다."
 )
 
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
@@ -135,7 +138,9 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "요청하면 이 도구를 호출하고, 결과(숨김 건수·표시 번호·도구·원문 "
             "크기·숨김 시각·한 줄 요약)를 사람이 읽기 좋은 표로 정리해 "
             "보여준다. 항목 본문과 명령 원문은 반환하지 않는다. "
-            "표시 번호는 목록 호출마다 새로 부여된다."
+            "표시 번호는 목록 호출마다 새로 부여되며, 이후 도착하는 "
+            "'N번 복원해' 요청은 마지막으로 반환한 이 목록의 번호 기준으로 "
+            "해석된다."
         ),
         "parameters": {
             "type": "object",
@@ -153,10 +158,13 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "name": UNHIDE_TOOL,
         "description": (
             "숨긴 항목 하나를 재실행 없이 원문으로 복원한다. 사용자가 "
-            "'N번 복원해', '그거 되돌려'처럼 요청하면 직전에 보여준 목록의 "
-            "번호를 item_id로 바꾼 뒤, 복원 직전에 list_context_items로 목록을 "
-            "다시 확인해 같은 item_id인지 검증하고 호출한다. 존재하지 않으면 "
-            "다른 ID로 대체하지 않고 not_found를 사용자에게 설명한다."
+            "'N번 복원해', '그거 되돌려'처럼 요청하면 사용자가 말한 번호를 "
+            "item_id 자리에 그대로 넘긴다(예: '2', '2번', '#2') — 도구가 "
+            "마지막으로 보여준 목록의 N번으로 해석하므로 번호를 기억하거나 "
+            "item_id로 바꿀 필요가 없다. 정확한 item_id를 알면 그대로 쓴다. "
+            "no_recent_list면 먼저 목록을 보여주고, unknown_display_number면 "
+            "새 목록을 보여주고 다시 선택받는다. 존재하지 않으면 다른 ID로 "
+            "대체하지 않고 오류를 사용자에게 설명한다."
         ),
         "parameters": {
             "type": "object",
@@ -301,6 +309,10 @@ def make_list_handler(state: PluginState) -> Callable[..., str]:
         }
         state.presentations.prune(scope_key, live_ids)
         items = decorate_items(items, state.presentations.snapshot().get(scope_key, {}))
+        state.presentations.record_view(scope_key, [
+            (item["display_number"], item["item_id"])
+            for item in items if item["display_number"] is not None
+        ])
         hidden_count = sum(item["visibility"] == "compacted" for item in items)
         prefix = "검색 조건에 맞는" if query else "현재"
         message = f"{prefix} 숨겨진 항목 {hidden_count}건" if hidden_count else f"{prefix} 숨겨진 항목 없음"
@@ -324,7 +336,12 @@ def make_unhide_handler(state: PluginState) -> Callable[..., str]:
         scope = scope_for(state, session_id)
         if scope is None:
             return _dump({"ok": False, "error": "not_found"})
-        result = _engine_unhide(state.engine, scope, target.strip())
+        resolved, resolve_error = state.presentations.resolve_reference(
+            scope.scope_key(), target.strip())
+        if resolve_error is not None:
+            # Fail closed on number references: never guess a target.
+            return _dump({"ok": False, "error": resolve_error})
+        result = _engine_unhide(state.engine, scope, resolved or "")
         if not result.ok or result.item is None:
             return _dump({"ok": False, "error": result.error or "not_found"})
         state.presentations.mark_visible(scope.scope_key(), result.item.item_id)

@@ -33,6 +33,25 @@ def _utc_now_iso() -> str:
         "+00:00", "Z")
 
 
+def numeric_reference(text: str) -> int | None:
+    """Parse a display-number reference ("2", "2번", "#2") into an int.
+
+    Returns None when the text is not purely a number reference, in which
+    case the caller treats it as an exact item id. ``item_...`` ids can
+    never collide with this pattern because they contain letters.
+    """
+    if not isinstance(text, str):
+        return None
+    collapsed = "".join(text.split())
+    if collapsed.startswith("#"):
+        collapsed = collapsed[1:]
+    if collapsed.endswith("번"):
+        collapsed = collapsed[:-1]
+    if not collapsed or not collapsed.isdigit():
+        return None
+    return int(collapsed)
+
+
 def summary_line_from_excerpts(excerpt_lines: Iterable[str]) -> str:
     """First non-empty excerpt line, whitespace-collapsed, length-capped."""
     for line in excerpt_lines:
@@ -60,6 +79,7 @@ class PresentationRegistry:
         self._lock = threading.Lock()
         self._entries: dict[str, dict[str, Presentation]] = {}
         self._next_order: dict[str, int] = {}
+        self._views: dict[str, list[tuple[int, str]]] = {}
 
     def record_hidden(
         self,
@@ -90,6 +110,42 @@ class PresentationRegistry:
             entry = self._entries.get(scope_key, {}).get(item_id)
             if entry is not None:
                 entry.last_visibility = "original"
+
+    def record_view(
+        self, scope_key: str, numbered_items: list[tuple[int, str]]
+    ) -> None:
+        """Remember the numbering of the most recent list result.
+
+        Display numbers are re-issued per list call, and this snapshot is
+        what a later "N번" reference resolves against. It is replaced only
+        by the next list call, so a user who saw numbers 1..N keeps those
+        meanings even after some of the items are restored.
+        """
+        with self._lock:
+            self._views[scope_key] = list(numbered_items)
+
+    def resolve_reference(
+        self, scope_key: str, text: str
+    ) -> tuple[str | None, str | None]:
+        """Resolve a tool argument to an item id: (item_id, error).
+
+        Exact ids pass through unchanged. A pure number resolves against
+        the last list result for the scope and fails closed: with no list
+        shown yet the answer is ``no_recent_list``; a number the last list
+        did not issue is ``unknown_display_number``. The registry never
+        guesses a target.
+        """
+        number = numeric_reference(text)
+        if number is None:
+            return text, None
+        with self._lock:
+            view = self._views.get(scope_key)
+        if view is None:
+            return None, "no_recent_list"
+        for issued_number, item_id in view:
+            if issued_number == number:
+                return item_id, None
+        return None, "unknown_display_number"
 
     def prune(self, scope_key: str, live_item_ids: set[str]) -> int:
         """Drop entries whose engine item no longer exists (expired/evicted)."""

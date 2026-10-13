@@ -144,13 +144,16 @@ def main() -> int:
         ok = ok and item["original_bytes_size"] == len(body.encode("utf-8"))
         ok = ok and isinstance(item["hidden_at"], str) and item["hidden_at"].endswith("Z")
 
-        restored = json.loads(unhide({"item_id": hidden["item_id"]}, session_id=SESSION))
+        restored = json.loads(unhide({"item_id": "1번"}, session_id=SESSION))
         after = json.loads(list_items({"query": ""}, session_id=SESSION))
-        print(f"unhide          : {restored}")
+        print(f"unhide('1번')   : {restored}")
         print(f"after           : hidden_count={after['hidden_count']} "
               f"visibility={after['items'][0]['visibility']} "
               f"display_number={after['items'][0]['display_number']}")
         ok = ok and restored.get("ok") is True
+        if restored.get("item_id") != hidden["item_id"]:
+            print("number reference resolved to a different item")
+            ok = False
         ok = ok and after["hidden_count"] == 0
         ok = ok and after["items"][0]["visibility"] == "original"
         ok = ok and after["items"][0]["display_number"] is None
