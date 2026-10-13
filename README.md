@@ -42,6 +42,13 @@ if result.ok and result.plan:
 engine.unhide(scope, result.plan.item_id)
 ```
 
+## Hermes에서 숨김 확인·복원
+
+같은 세션에서 “숨김 목록 보여줘”, “1번 복원해”, “전부 되돌려”라고 요청하면
+에이전트가 실제 도구를 호출해 확인·복원한다. 숨김 상태는 프로세스 메모리에만
+있어 재시작하면 사라진다. 자세한 동작 규칙과 배포 후 시험 절차는
+[사람용 확인·복원 규약](docs/hermes-human-supervision.md)을 참고한다.
+
 ## 개발 및 테스트
 ```bash
 uv sync --dev
