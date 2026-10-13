@@ -275,3 +275,23 @@ base `main` `8e85a4a4d0ee28e24e4884f62191aae966c90619`. Uncommitted, no push.
 - **Handoff:** `final-result.md` in the workspace
   (`artifacts/2026-10-11/context-hide-hermes-pilot/`); commits remain
   local — push/PR and any other profile stay out of scope.
+
+## A-plan slice: 사람용 확인·복원 규약 — DONE (2026-10-13, local)
+
+- **Scope:** `docs/hermes-human-supervision.md` (규약·수동 시나리오),
+  README 링크, 어댑터 도구 설명 개정, 정적 시스템 안내(487자,
+  `context-hide.human-supervision`), 목록 메타데이터(`presentation.py`),
+  `tests/test_hermes_human_supervision.py` 8건, `tools/probe_supervision.py`.
+- **Commits (local):** `7fd4968` docs → `97b954f` feat → probe+milestones 커밋
+  (이 문서를 포함한 커밋; `git log` 참조).
+- **Tests:** `PYTHONPATH= ./.venv/bin/python -m pytest tests/ -q -p no:cacheprovider`
+  → **210 passed / 4 skipped** (baseline `dbcd978`: 202/4). Hermes 소스 루트를
+  PYTHONPATH에 둔 제한 실행에서 `hermes_yaml` 계약 3건 해제 →
+  `test_hermes_package` + `test_hermes_runtime_integration` 14 passed / 1 skipped
+  (hatchling 없음, 기존 스킵).
+- **Real PluginManager probe (`tools/probe_supervision.py`): VERDICT PASS** —
+  임시 `HERMES_HOME`에서 실제 매니저가 도구 3종 + `llm_request` 1개 +
+  섹션(487자)을 로드, hide → list(`hidden_count=1`, `display_number=1`,
+  `original_bytes_size=8879`, `hidden_at=…Z`) → unhide(`hidden_count=0`) 확인.
+- **경계:** A안은 같은 프로세스 메모리·도구 호출 시에만 동작. 설치본 동기화,
+  재시작, 통합 수동 시나리오 실행은 Atlas. push/PR 없음.
