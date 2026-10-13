@@ -232,7 +232,8 @@ def test_tool_descriptions_route_human_list_and_restore_requests():
 
 def test_unhide_description_routes_number_references_verbatim():
     desc = plugin.TOOL_SCHEMAS["unhide_context"]["description"]
-    assert "번" in desc and "그대로" in desc
+    assert "번" in desc and "고정" in desc
+    assert "복원 직전" in desc and "임의로" in desc
 
 
 def test_numeric_reference_resolves_against_the_last_shown_list():
@@ -288,3 +289,28 @@ def test_numeric_reference_keeps_working_after_a_restore():
     assert first_restore["item_id"] == second["item_id"]
     second_restore = _unhide(state, " 2 ")  # surrounding whitespace tolerated
     assert second_restore["ok"] is True
+
+
+def test_fixed_id_restore_after_recheck_keeps_original_target():
+    state = _state()
+    first = _hide(state, "call_1", _body("alpha"))
+    _hide(state, "call_2", _body("beta"))
+    shown = _list(state)
+    fixed = next(
+        item["item_id"] for item in shown["items"] if item["display_number"] == 2
+    )
+    assert fixed == first["item_id"]
+
+    # New hide changes the numbering: the same number now names another item.
+    _hide(state, "call_3", _body("gamma"))
+    rechecked = _list(state)
+    assert rechecked["items"][1]["item_id"] != fixed
+
+    # Required path: restore the fixed exact ID, not the new number.
+    restored = _unhide(state, fixed)
+    assert restored["ok"] is True
+    assert restored["item_id"] == fixed
+    after = _list(state)
+    assert next(
+        item["visibility"] for item in after["items"] if item["item_id"] == fixed
+    ) == "original"
