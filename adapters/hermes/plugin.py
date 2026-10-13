@@ -60,6 +60,7 @@ from .handlers import hide as _engine_hide
 from .handlers import list_records as _engine_list
 from .handlers import middleware_step as _engine_step
 from .handlers import unhide as _engine_unhide
+from .presentation import PresentationRegistry, decorate_items
 from .session import SessionTranscriptStore
 from context_hide.engine import ContextHideEngine
 from context_hide.model import Scope
@@ -86,6 +87,26 @@ HIDE_TOOL = "hide_context"
 LIST_TOOL = "list_context_items"
 UNHIDE_TOOL = "unhide_context"
 
+#: Static system-prompt guidance for the human supervision protocol. It is
+#: fixed text (never per-session state) rendered once per new session; when
+#: the host lacks the section API or the plugin loads disabled, only the
+#: tool descriptions carry the protocol.
+SUPERVISION_SECTION_ID = "context-hide.human-supervision"
+SUPERVISION_SECTION_MAX_CHARS = 1200
+SUPERVISION_SECTION_TEXT = (
+    "context-hide 도구는 사용자의 세션 채팅 요청에 따라 숨김 상태를 "
+    "확인·복원할 때 쓴다. 사용자가 '숨김 목록 보여줘'처럼 요청하면 "
+    "list_context_items를 호출해 숨김 항목만 골라 표시 번호(1부터), 도구, "
+    "원문 크기, 숨김 시각, 한 줄 요약이 담긴 표로 보여준다. 번호는 목록마다 "
+    "새로 부여되므로 사용자에게 보여준 표의 번호와 item_id를 기억하고, "
+    "'N번 복원해' 요청이 오면 복원 직전에 list_context_items로 목록을 다시 "
+    "확인해 같은 item_id인지 검증한 뒤 unhide_context(item_id)를 호출하고 "
+    "결과를 목록으로 다시 확인한다. '전부 되돌려'는 필터 없는 목록에서 숨김 "
+    "item_id를 먼저 고정한 뒤 한 건씩 복원한다. 숨김이 0건이면 '현재 숨겨진 "
+    "항목 없음'이라고만 말한다. 재시작 여부를 모를 때 원인을 단정하지 않는다. "
+    "숨김 상태는 같은 프로필·세션·프로세스에서만 보이고 재시작하면 사라진다."
+)
+
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     HIDE_TOOL: {
         "name": HIDE_TOOL,
@@ -109,8 +130,12 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     LIST_TOOL: {
         "name": LIST_TOOL,
         "description": (
-            "List hidden items (IDs and restore availability). "
-            "Original bodies and commands are never shown."
+            "이 세션에서 숨김(compacted) 처리된 도구 결과를 사람이 확인할 수 "
+            "있게 반환한다. 사용자가 '숨김 목록 보여줘', '뭐 숨겨져 있어?'처럼 "
+            "요청하면 이 도구를 호출하고, 결과(숨김 건수·표시 번호·도구·원문 "
+            "크기·숨김 시각·한 줄 요약)를 사람이 읽기 좋은 표로 정리해 "
+            "보여준다. 항목 본문과 명령 원문은 반환하지 않는다. "
+            "표시 번호는 목록 호출마다 새로 부여된다."
         ),
         "parameters": {
             "type": "object",
@@ -127,8 +152,11 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     UNHIDE_TOOL: {
         "name": UNHIDE_TOOL,
         "description": (
-            "Restore one hidden item to its original body without "
-            "re-running any command. Pass an item_id from list_context_items."
+            "숨긴 항목 하나를 재실행 없이 원문으로 복원한다. 사용자가 "
+            "'N번 복원해', '그거 되돌려'처럼 요청하면 직전에 보여준 목록의 "
+            "번호를 item_id로 바꾼 뒤, 복원 직전에 list_context_items로 목록을 "
+            "다시 확인해 같은 item_id인지 검증하고 호출한다. 존재하지 않으면 "
+            "다른 ID로 대체하지 않고 not_found를 사용자에게 설명한다."
         ),
         "parameters": {
             "type": "object",
@@ -197,6 +225,7 @@ class PluginState:
 
     engine: ContextHideEngine = field(default_factory=ContextHideEngine)
     store: SessionTranscriptStore = field(default_factory=SessionTranscriptStore)
+    presentations: PresentationRegistry = field(default_factory=PresentationRegistry)
     profile: str = "default"
     is_enabled: Callable[[], bool] = field(default=lambda: False)
     count_middlewares: Callable[[], int] = field(
@@ -239,6 +268,11 @@ def make_hide_handler(state: PluginState) -> Callable[..., str]:
         result = _engine_hide(state.engine, state.store, scope, target.strip())
         if not result.ok or result.plan is None:
             return _dump({"ok": False, "error": result.error or "not_found"})
+        original_bytes = 0
+        if result.item is not None:
+            original_bytes = len(result.item.original.encode("utf-8"))
+        state.presentations.record_hidden(
+            scope.scope_key(), result.plan.item_id, original_bytes)
         return _dump({
             "ok": True,
             "item_id": result.plan.item_id,
@@ -261,7 +295,19 @@ def make_list_handler(state: PluginState) -> Callable[..., str]:
         if scope is None:
             return _dump({"ok": False, "error": "not_found"})
         items = _engine_list(state.engine, scope, query)
-        return _dump({"ok": True, "count": len(items), "items": items})
+        scope_key = scope.scope_key()
+        live_ids = {
+            item.item_id for item in state.engine.store.items(scope)
+        }
+        state.presentations.prune(scope_key, live_ids)
+        items = decorate_items(items, state.presentations.snapshot().get(scope_key, {}))
+        hidden_count = sum(item["visibility"] == "compacted" for item in items)
+        prefix = "검색 조건에 맞는" if query else "현재"
+        message = f"{prefix} 숨겨진 항목 {hidden_count}건" if hidden_count else f"{prefix} 숨겨진 항목 없음"
+        return _dump({
+            "ok": True, "count": len(items), "items": items,
+            "hidden_count": hidden_count, "message": message,
+        })
 
     return list_context_items
 
@@ -281,6 +327,7 @@ def make_unhide_handler(state: PluginState) -> Callable[..., str]:
         result = _engine_unhide(state.engine, scope, target.strip())
         if not result.ok or result.item is None:
             return _dump({"ok": False, "error": result.error or "not_found"})
+        state.presentations.mark_visible(scope.scope_key(), result.item.item_id)
         return _dump({
             "ok": True,
             "item_id": result.item.item_id,
@@ -395,5 +442,20 @@ def register(ctx: Any) -> PluginState:
         description=TOOL_SCHEMAS[UNHIDE_TOOL]["description"],
     )
     ctx.register_middleware("llm_request", make_middleware(state))
+
+    # Optional host capability: freeze the human-supervision protocol into
+    # each new session prompt. Absent API, disabled plugin, or a duplicate
+    # registration must never block tool/middleware registration.
+    register_section = getattr(ctx, "register_system_prompt_section", None)
+    if callable(register_section) and state.is_enabled():
+        try:
+            register_section(
+                SUPERVISION_SECTION_ID,
+                SUPERVISION_SECTION_TEXT,
+                position="after_memory",
+                max_chars=SUPERVISION_SECTION_MAX_CHARS,
+            )
+        except Exception:
+            logger.debug("context-hide: system prompt section unavailable")
     logger.debug("context-hide plugin registered (profile=%s)", profile)
     return state

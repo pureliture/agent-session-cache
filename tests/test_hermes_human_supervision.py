@@ -1,0 +1,230 @@
+"""A-plan supervision contracts; local requests only, no agent/provider calls."""
+from __future__ import annotations
+
+import json
+
+from _adapter_loader import hermes_adapter
+
+plugin = hermes_adapter().plugin
+SESSION = "human-supervision-session"
+
+
+def _state(**overrides):
+    return plugin.PluginState(
+        is_enabled=lambda: True, count_middlewares=lambda: 0, **overrides,
+    )
+
+
+def _body(label="sample"):
+    return "\n".join(f"{label} row {i:03d}: " + "a" * 60 for i in range(80))
+
+
+def _request(body, call_id):
+    return {"input": [
+        {"type": "function_call", "call_id": call_id, "name": "read_file",
+         "arguments": json.dumps({"path": "sample.txt"})},
+        {"type": "function_call_output", "call_id": call_id, "output": body},
+    ]}
+
+
+def _hide(state, call_id="call_1", body=None, session=SESSION):
+    original = _body() if body is None else body
+    plugin.make_middleware(state)(
+        request=_request(original, call_id), session_id=session,
+        api_mode="codex_responses",
+    )
+    result = json.loads(plugin.make_hide_handler(state)(
+        {"tool_call_id": call_id}, session_id=session,
+    ))
+    assert result["ok"] is True, result
+    return result
+
+
+def _list(state, query="", session=SESSION):
+    return json.loads(plugin.make_list_handler(state)(
+        {"query": query}, session_id=session,
+    ))
+
+
+def _unhide(state, item_id, session=SESSION):
+    return json.loads(plugin.make_unhide_handler(state)(
+        {"item_id": item_id}, session_id=session,
+    ))
+
+
+def test_list_counts_hidden_separately_from_restored_records():
+    state = _state()
+    empty = _list(state)
+    assert empty["count"] == 0 and empty["items"] == []
+    assert empty["hidden_count"] == 0
+    assert empty["message"] == "현재 숨겨진 항목 없음"
+
+    hidden = _hide(state)
+    listed = _list(state)
+    assert listed["count"] == len(listed["items"]) == 1
+    assert listed["hidden_count"] == 1
+    assert listed["message"] == "현재 숨겨진 항목 1건"
+
+    assert _unhide(state, hidden["item_id"])["ok"] is True
+    restored = _list(state)
+    assert restored["count"] == len(restored["items"]) == 1
+    assert restored["items"][0]["visibility"] == "original"
+    assert restored["hidden_count"] == 0
+    assert restored["message"] == "현재 숨겨진 항목 없음"
+
+
+def test_hidden_items_carry_human_fields_and_newest_first():
+    state = _state()
+    body_a, body_b = _body("alpha"), _body("beta")
+    first = _hide(state, "call_1", body_a)
+    second = _hide(state, "call_2", body_b)
+    assert first["item_id"] != second["item_id"]
+
+    items = {item["item_id"]: item for item in _list(state)["items"]}
+    top, below = items[second["item_id"]], items[first["item_id"]]
+    assert [item["item_id"] for item in _list(state)["items"]] == [
+        second["item_id"], first["item_id"]]
+    assert [item["display_number"] for item in _list(state)["items"]] == [1, 2]
+    assert top["hidden_order"] > below["hidden_order"]
+    assert top["hidden_at"].endswith("Z") and len(top["hidden_at"]) == 20
+    assert top["original_bytes_size"] == len(body_b.encode("utf-8"))
+    line = top["summary_line"]
+    assert line and "\n" not in line and len(line) <= 160
+    assert line.split(" ")[0] == "beta"
+
+    restored = _list(state)["items"][0]["item_id"]
+    assert _unhide(state, restored)["ok"] is True
+    after = _list(state)
+    # Hidden items keep the numbers and sort first; the restored record
+    # stays in the list (history) with display_number None and its
+    # original hidden_at retained.
+    assert [item["display_number"] for item in after["items"]] == [1, None]
+    assert after["items"][0]["item_id"] == first["item_id"]
+    assert after["items"][1]["hidden_at"] == top["hidden_at"]
+
+
+def test_query_view_renumbers_and_reports_search_scope():
+    state = _state()
+    _hide(state, "call_1", _body("alpha"))
+    _hide(state, "call_2", _body("beta"))
+    _hide(state, "call_3", _body("gamma"))
+
+    matched = _list(state, query="beta")
+    assert matched["hidden_count"] == 1
+    assert matched["message"] == "검색 조건에 맞는 숨겨진 항목 1건"
+    assert [item["display_number"] for item in matched["items"]] == [1]
+
+    none = _list(state, query="no-such-marker")
+    assert none["count"] == 0 and none["hidden_count"] == 0
+    assert none["message"] == "검색 조건에 맞는 숨겨진 항목 없음"
+
+    full = _list(state)
+    assert full["hidden_count"] == 3
+    assert [item["display_number"] for item in full["items"]] == [1, 2, 3]
+
+
+def test_expired_items_prune_their_display_metadata():
+    from context_hide.engine import ContextHideEngine
+    from context_hide.store import MemoryContextStore
+
+    now = [1000.0]
+    state = _state(engine=ContextHideEngine(
+        store=MemoryContextStore(ttl_seconds=60, clock=lambda: now[0])))
+    hidden = _hide(state)
+    scope_key = next(iter(state.presentations.snapshot()))
+    assert hidden["item_id"] in state.presentations.snapshot()[scope_key]
+
+    now[0] += 61.0
+    expired = _list(state)
+    assert expired["count"] == 0 and expired["hidden_count"] == 0
+    assert expired["message"] == "현재 숨겨진 항목 없음"
+    assert state.presentations.snapshot().get(scope_key, {}) == {}
+
+
+def test_rehide_after_restore_starts_a_new_hide_transition():
+    state = _state()
+    body = _body("cycle")
+    hidden = _hide(state, "call_1", body)
+    first = {item["item_id"]: item for item in _list(state)["items"]}[
+        hidden["item_id"]]
+
+    # Re-hide while already hidden: same transition, no new timestamp.
+    again = _hide(state, "call_1", body)
+    assert again["item_id"] == hidden["item_id"]
+    same = {item["item_id"]: item for item in _list(state)["items"]}[
+        hidden["item_id"]]
+    assert same["hidden_order"] == first["hidden_order"]
+    assert same["hidden_at"] == first["hidden_at"]
+
+    # Restore, then hide again: a new transition gets a new order.
+    assert _unhide(state, hidden["item_id"])["ok"] is True
+    refreshed = _hide(state, "call_1", body)
+    assert refreshed["item_id"] == hidden["item_id"]
+    newest = _list(state)
+    assert newest["hidden_count"] == 1
+    item = newest["items"][0]
+    assert item["hidden_order"] > first["hidden_order"]
+    assert item["display_number"] == 1
+    assert item["hidden_at"] >= first["hidden_at"]
+
+
+class _SectionCtx:
+    """PluginContext surface with the optional prompt-section API."""
+
+    def __init__(self, enabled: bool = True, with_section_api: bool = True):
+        self.profile_name = "default"
+        self._config = {"enabled": enabled}
+        self.tools: dict[str, dict] = {}
+        self.middlewares: dict[str, list] = {}
+        self.sections: list[dict] = []
+        if with_section_api:
+            self.register_system_prompt_section = self._register_section
+
+    def _register_section(self, id, content, *, position="after_memory",
+                          max_chars=1000):
+        self.sections.append({
+            "id": id, "content": content, "position": position,
+            "max_chars": max_chars,
+        })
+
+    def get_config(self, key, default=None):
+        return self._config.get(key, default)
+
+    def register_tool(self, name, toolset, schema, handler, description="", **_extra):
+        self.tools[name] = {"description": description}
+
+    def register_middleware(self, kind, callback):
+        self.middlewares.setdefault(kind, []).append(callback)
+
+
+def test_enabled_plugin_registers_static_supervision_section():
+    ctx = _SectionCtx()
+    plugin.register(ctx)
+    assert len(ctx.sections) == 1
+    section = ctx.sections[0]
+    assert section["id"] == "context-hide.human-supervision"
+    assert section["position"] == "after_memory"
+    assert section["max_chars"] == 1200
+    text = section["content"]
+    assert isinstance(text, str) and len(text) <= 1200
+    for token in ("list_context_items", "unhide_context", "숨김"):
+        assert token in text, token
+
+
+def test_section_registration_degrades_without_api_or_when_disabled():
+    legacy = _SectionCtx(with_section_api=False)
+    plugin.register(legacy)  # must not raise on hosts without the API
+    assert legacy.tools  # tools still registered
+
+    disabled = _SectionCtx(enabled=False)
+    plugin.register(disabled)
+    assert disabled.sections == []
+
+
+def test_tool_descriptions_route_human_list_and_restore_requests():
+    sections = plugin.TOOL_SCHEMAS
+    list_desc = sections["list_context_items"]["description"]
+    unhide_desc = sections["unhide_context"]["description"]
+    assert "사용자" in list_desc and "보여" in list_desc
+    assert "복원" in unhide_desc and "item_id" in unhide_desc
+    assert "목록" in unhide_desc
