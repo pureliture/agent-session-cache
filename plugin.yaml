@@ -6,6 +6,12 @@ author: Context Hide Contributors
 license: MIT
 homepage: https://github.com/pureliture/agent-session-cache
 kind: standalone
+# The engine and the Hermes adapter are vendored under vendor/ and are
+# loaded by the plugin root at import time (see __init__.py). Nothing is
+# installed into Hermes' shared environment, so the plugin declares its own
+# Python runtime instead of joining the uv workspace as a buildable member.
+# That also keeps two profiles from declaring the same distribution name.
+python_runtime: external
 provides_tools:
   - hide_context
   - list_context_items
