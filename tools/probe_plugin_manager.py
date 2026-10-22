@@ -21,7 +21,9 @@ PLUGIN_ID = "context-hide"
 
 
 def main() -> int:
-    hermes_repo = os.environ.get("HERMES_REPO", "~/.hermes/hermes-agent")
+    hermes_repo = os.environ.get(
+        "HERMES_REPO", str(Path.home() / ".hermes" / "hermes-agent")
+    )
     if str(hermes_repo) not in sys.path:
         sys.path.insert(0, str(hermes_repo))
 

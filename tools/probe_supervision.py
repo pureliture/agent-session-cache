@@ -46,7 +46,9 @@ def _codex_request(body: str) -> dict:
 
 
 def main() -> int:
-    hermes_repo = os.environ.get("HERMES_REPO", "~/.hermes/hermes-agent")
+    hermes_repo = os.environ.get(
+        "HERMES_REPO", str(Path.home() / ".hermes" / "hermes-agent")
+    )
     if hermes_repo not in sys.path:
         sys.path.insert(0, hermes_repo)
 

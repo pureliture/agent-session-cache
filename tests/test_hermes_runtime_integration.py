@@ -27,7 +27,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 HERMES_REPO = Path(
-    os.environ.get("HERMES_REPO", "~/.hermes/hermes-agent")
+    os.environ.get("HERMES_REPO", str(Path.home() / ".hermes" / "hermes-agent"))
 ).resolve()
 
 pytestmark = pytest.mark.skipif(
