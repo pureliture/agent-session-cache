@@ -121,14 +121,14 @@ def test_item_metadata_serialization():
         visibility="compacted",
         version=1,
         expires_at=1700000000.0,
-        source="lfm",
+        source="llm",
         bytes_size=4096,
         tool_name="terminal",
         excerpt_lines=("line 1", "line 2"),
         summary="shortened summary",
     )
     assert meta.tool_call_id == "call_456"
-    assert meta.compaction_source == "lfm"
+    assert meta.compaction_source == "llm"
 
     d = meta.to_dict()
     assert d["item_id"] == "item_123"
@@ -136,7 +136,7 @@ def test_item_metadata_serialization():
     assert d["content_sha256"] == "sha_789"
     assert d["visibility"] == "compacted"
     assert d["version"] == 1
-    assert d["source"] == "lfm"
+    assert d["source"] == "llm"
     assert d["bytes_size"] == 4096
     assert d["tool_name"] == "terminal"
     assert d["excerpt_lines"] == ("line 1", "line 2")
@@ -153,7 +153,7 @@ def test_engine_config_defaults():
     assert cfg.max_excerpt_line_length == 240
     assert cfg.max_summary_length == 1600
     assert cfg.max_invocation_bytes == 2048
-    assert cfg.lfm_max_input_bytes == 12288
+    assert cfg.max_input_bytes == 12288
 
 
 def test_compute_sha256_canonical_hashing():

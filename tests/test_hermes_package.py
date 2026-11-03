@@ -50,6 +50,24 @@ def test_manifest_exists_and_parses() -> None:
     assert isinstance(data.get("version"), str) and data["version"]
 
 
+def test_manifest_declares_opt_in_model_summarizer_settings() -> None:
+    schema = _parse_manifest().get("config_schema")
+    assert isinstance(schema, dict)
+    expected = {
+        "summary_mode", "base_url", "model", "timeout_seconds",
+        "max_input_bytes", "max_output_tokens",
+    }
+    assert expected <= set(schema)
+    assert schema["summary_mode"]["type"] == "str"
+    assert schema["summary_mode"]["default"] == "rules"
+    assert schema["summary_mode"]["choices"] == ["rules", "llm"]
+    assert schema["base_url"]["default"] == ""
+    assert schema["model"]["default"] == ""
+    assert schema["timeout_seconds"]["default"] == 60
+    assert schema["max_input_bytes"]["default"] == 12_288
+    assert schema["max_output_tokens"]["default"] == 384
+
+
 def test_manifest_declares_provided_tools_and_middleware() -> None:
     data = _parse_manifest()
     # The plugin ships exactly three tools; the middleware is registered in code.
@@ -167,3 +185,32 @@ def test_plugin_registers_through_root_export_default_off() -> None:
         request={"messages": []}, session_id="s1", api_mode="chat_completions"
     ) is None
     assert state is not None
+
+
+def test_vendored_packages_match_source_trees() -> None:
+    pairs = (
+        (REPO / "src" / "context_hide", REPO / "vendor" / "context_hide"),
+        (REPO / "adapters" / "hermes", REPO / "vendor" / "context_hide_hermes"),
+    )
+    for source_dir, vendor_dir in pairs:
+        def file_bytes(directory: Path) -> dict[Path, bytes]:
+            return {
+                path.relative_to(directory): path.read_bytes()
+                for path in directory.rglob("*")
+                if path.is_file()
+                and "__pycache__" not in path.parts
+                and path.suffix not in {".pyc", ".pyo"}
+            }
+
+        source = file_bytes(source_dir)
+        vendored = file_bytes(vendor_dir)
+        missing = sorted(str(path) for path in source.keys() - vendored.keys())
+        extra = sorted(str(path) for path in vendored.keys() - source.keys())
+        different = sorted(
+            str(path) for path in source.keys() & vendored.keys()
+            if source[path] != vendored[path]
+        )
+        assert not (missing or extra or different), (
+            f"vendor drift for {source_dir.name}: "
+            f"missing={missing}, extra={extra}, different={different}"
+        )

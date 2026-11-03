@@ -7,7 +7,7 @@ from typing import Any
 
 from context_hide.model import SpanChoice
 from context_hide.store import MemoryContextStore
-from context_hide.summary import LFMSummarizer, SummarizerConfig, validate_summary_text
+from context_hide.summary import ModelSummarizer, SummarizerConfig, validate_summary_text
 
 
 def test_one_summary_field_is_generated_applied_and_restored():
@@ -26,7 +26,7 @@ def test_one_summary_field_is_generated_applied_and_restored():
         requests.append(kwargs)
         return {"text": json.dumps(summary), "finish_reason": "stop"}
 
-    summarizer = LFMSummarizer(generate=generate, config=SummarizerConfig())
+    summarizer = ModelSummarizer(generate=generate, config=SummarizerConfig())
     result = asyncio.run(
         summarizer.summarize(source, (), lambda: None, invocation=invocation)
     )
@@ -50,10 +50,10 @@ def test_one_summary_field_is_generated_applied_and_restored():
         original=source,
         tool_name="read_file",
         invocation=invocation,
-        choice=SpanChoice(("Warning: optional descriptions are omitted.",), "lfm", result),
+        choice=SpanChoice(("Warning: optional descriptions are omitted.",), "llm", result),
     )
     assert saved.ok and saved.item is not None
-    assert saved.item.compaction_source == "lfm"
+    assert saved.item.compaction_source == "llm"
     assert summary["summary"] in saved.item.compacted
     assert "実行" not in saved.item.compacted
     assert "実行:" not in saved.item.compacted

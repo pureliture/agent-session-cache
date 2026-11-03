@@ -24,6 +24,7 @@ from context_hide.model import (
     ToolResultRecord,
     compute_invocation_digest,
 )
+from context_hide.transport import Summarizer
 
 
 def hide(
@@ -33,6 +34,7 @@ def hide(
     tool_call_id: str,
     *,
     status: str = "ok",
+    summarizer: Summarizer | None = None,
 ) -> MutationResult:
     """Hide one transmitted tool result found via the session record."""
     if not isinstance(tool_call_id, str) or not tool_call_id.strip():
@@ -60,7 +62,7 @@ def hide(
         status=status,
         host_handle=entry.host_handle,
     )
-    return engine.hide_sync(scope, record)
+    return engine.hide_sync(scope, record, summarizer=summarizer)
 
 
 def list_records(

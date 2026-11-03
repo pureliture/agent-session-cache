@@ -28,7 +28,7 @@ from context_hide.policy import (
 )
 from context_hide.store import MemoryContextStore
 from context_hide.summary import (
-    LFMSummarizer,
+    ModelSummarizer,
     SummarizerConfig,
     is_lossless_encoded,
     prepare_result_source,
@@ -38,10 +38,10 @@ from context_hide.summary import (
     verify_exit_claims,
 )
 from context_hide.transport import (
-    LFMUnavailable,
     OnCall,
     Summarizer,
     SummarizerError,
+    SummarizerUnavailable,
 )
 
 __version__ = "0.1.0"
@@ -54,6 +54,7 @@ __all__ = [
     "LFMUnavailable",
     "LFMSummarizer",
     "MemoryContextStore",
+    "ModelSummarizer",
     "MutationResult",
     "OnCall",
     "ReplacementPlan",
@@ -63,6 +64,7 @@ __all__ = [
     "Summarizer",
     "SummarizerConfig",
     "SummarizerError",
+    "SummarizerUnavailable",
     "ToolResultRecord",
     "canonical",
     "check_refusal_reason",
@@ -85,3 +87,16 @@ __all__ = [
     "verify_exit_claims",
     "__version__",
 ]
+
+
+def __getattr__(name: str):
+    """Resolve deprecated model-specific names lazily."""
+    if name == "LFMSummarizer":
+        from context_hide.summary import __getattr__ as summary_getattr
+
+        return summary_getattr(name)
+    if name == "LFMUnavailable":
+        from context_hide.transport import __getattr__ as transport_getattr
+
+        return transport_getattr(name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

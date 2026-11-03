@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
+import warnings
 
 OnCall = Callable[[], None]
 
@@ -15,14 +16,25 @@ class SummarizerError(Exception):
         self.reason = reason
 
 
-class LFMUnavailable(SummarizerError):
-    """Compatibility alias for summarizer unavailability or validation rejection."""
-    pass
+class SummarizerUnavailable(SummarizerError):
+    """Raised when summarization is unavailable or its result is rejected."""
+
+
+def __getattr__(name: str) -> Any:
+    """Expose the former model-specific error name as a deprecated alias."""
+    if name == "LFMUnavailable":
+        warnings.warn(
+            "LFMUnavailable is deprecated; use SummarizerUnavailable",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return SummarizerUnavailable
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 @runtime_checkable
 class Summarizer(Protocol):
-    """Protocol for pluggable summary models (LFM, local LLM, or external APIs)."""
+    """Protocol for pluggable local or remote summary models."""
 
     async def summarize(
         self,
@@ -46,6 +58,7 @@ class Summarizer(Protocol):
             dict containing at least {"summary": str}.
 
         Raises:
-            SummarizerError: On network failure, schema rejection, or unverified facts.
+            SummarizerError: On transport failure.
+            SummarizerUnavailable: When a summary is unavailable or rejected.
         """
         ...

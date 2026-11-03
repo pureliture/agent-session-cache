@@ -103,6 +103,15 @@ def test_host_manifest_parser_accepts_this_repository(host_modules) -> None:
     assert set(manifest.provides_tools or []) == {
         "hide_context", "list_context_items", "unhide_context",
     }
+    schema = manifest.config_schema
+    assert schema["summary_mode"]["type"] == "str"
+    assert schema["summary_mode"]["default"] == "rules"
+    assert schema["summary_mode"]["choices"] == ["rules", "llm"]
+    assert schema["base_url"]["default"] == ""
+    assert schema["model"]["default"] == ""
+    assert schema["timeout_seconds"]["default"] == 60
+    assert schema["max_input_bytes"]["default"] == 12_288
+    assert schema["max_output_tokens"]["default"] == 384
     assert manifest.manifest_version <= manifest_mod.SUPPORTED_MANIFEST_VERSION
 
 
