@@ -8,12 +8,12 @@ from typing import Any
 import pytest
 
 from context_hide.summary import (
-    LFMSummarizer,
+    ModelSummarizer,
     SummarizerConfig,
     _PLAIN_RESULT_PROMPT,
     _SYSTEM_PROMPT,
 )
-from context_hide.transport import LFMUnavailable
+from context_hide.transport import SummarizerUnavailable
 
 
 @pytest.mark.parametrize(
@@ -49,14 +49,14 @@ def test_request_uses_input_structure_without_invocation_context(
 
     async def exercise() -> None:
         try:
-            await LFMSummarizer(generate=generate, config=SummarizerConfig()).summarize(
+            await ModelSummarizer(generate=generate, config=SummarizerConfig()).summarize(
                 original,
                 (),
                 lambda: None,
                 invocation={"command": "DO_NOT_SEND"},
                 context={"purpose": "DO_NOT_SEND"},
             )
-        except LFMUnavailable:
+        except SummarizerUnavailable:
             pass  # Only request assembly is under test; existing validator still rejects bad output.
 
     asyncio.run(exercise())

@@ -75,7 +75,7 @@ def test_engine_hide_with_summarizer():
     assert result.plan is not None
     assert "생성 요약" in result.plan.replacement_text
     assert result.item is not None
-    assert result.item.compaction_source == "lfm"
+    assert result.item.compaction_source == "llm"
 
 
 def test_engine_hide_preserves_host_handle():

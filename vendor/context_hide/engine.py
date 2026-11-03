@@ -121,7 +121,7 @@ class ContextHideEngine:
                         required,
                         invocation=record.invocation,
                     )
-                    choice = SpanChoice(required, "lfm", summary_dict)
+                    choice = SpanChoice(required, "llm", summary_dict)
                 except Exception:
                     choice = None
 
@@ -131,7 +131,7 @@ class ContextHideEngine:
                 raise asyncio.CancelledError
 
             # 7. Rule Verification & Choice Resolution
-            if choice is not None and choice.source == "lfm":
+            if choice is not None and choice.source == "llm":
                 summary = validate_summary_text(
                     record.content, choice.summary_text, required, invocation=record.invocation,
                 )
@@ -141,7 +141,7 @@ class ContextHideEngine:
                         or summary is None):
                     choice = baseline
                 else:
-                    choice = SpanChoice(required, "lfm", summary)
+                    choice = SpanChoice(required, "llm", summary)
             else:
                 choice = baseline
 
@@ -153,7 +153,7 @@ class ContextHideEngine:
                 facts=verified_facts(record.content),
                 options_omitted=options_omitted,
             )
-            if choice.source == "lfm" and len(rendered.encode("utf-8")) > len(record.content.encode("utf-8")) * 0.8:
+            if choice.source == "llm" and len(rendered.encode("utf-8")) > len(record.content.encode("utf-8")) * 0.8:
                 choice = baseline
                 rendered = render_compaction(item_id, choice.lines)
             if len(rendered) >= len(record.content) and choice is not baseline:
@@ -161,10 +161,9 @@ class ContextHideEngine:
                 rendered = render_compaction(item_id, choice.lines)
 
             # Final Fail-Open check
-            #   A rule-path choice was selected from the decoded view, so it is
-            #   verified against that same text; an LFM choice still verifies
-            #   against the raw content it was summarized from.
-            if choice.source == "lfm":
+            #   Rule choices use the decoded source. Model choices are
+            #   checked against the raw content they were generated from.
+            if choice.source == "llm":
                 check_source, check_required = record.content, required
             else:
                 check_source, check_required = rule_source, rule_required
@@ -186,10 +185,10 @@ class ContextHideEngine:
                 expires_at=self.store.now() + self.store.ttl_seconds,
                 tool_name=record.invocation.get("tool_name"),
                 compaction_source=choice.source,
-                invocation_snapshot=copy.deepcopy(record.invocation) if choice.source == "lfm" else None,
-                invocation_digest=record.invocation_digest if choice.source == "lfm" else None,
+                invocation_snapshot=copy.deepcopy(record.invocation) if choice.source == "llm" else None,
+                invocation_digest=record.invocation_digest if choice.source == "llm" else None,
                 context_hint=None,
-                invocation_options_omitted=options_omitted if choice.source == "lfm" else False,
+                invocation_options_omitted=options_omitted if choice.source == "llm" else False,
             )
             put_res = self.store.put(scope, item, reservation=token)
             if not put_res.ok:
@@ -212,10 +211,14 @@ class ContextHideEngine:
         scope: Scope,
         record: ToolResultRecord,
         *,
+        summarizer: Summarizer | None = None,
         options_omitted: bool = False,
     ) -> MutationResult:
-        """Synchronous hide method using conservative RuleSpanSelector."""
-        return asyncio.run(self.hide(scope, record, summarizer=None, options_omitted=options_omitted))
+        """Synchronously hide content with an optional model and rule fallback."""
+        return asyncio.run(self.hide(
+            scope, record, summarizer=summarizer,
+            options_omitted=options_omitted,
+        ))
 
     def list_items(self, scope: Scope, query: str = "") -> list[ItemMetadata]:
         """List metadata of context items belonging to scope."""

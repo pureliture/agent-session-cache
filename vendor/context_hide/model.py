@@ -122,7 +122,7 @@ class ItemMetadata:
     visibility: str  # "compacted" | "original"
     version: int
     expires_at: float
-    source: str = "rule"  # "rule" | "summarizer" | "lfm"
+    source: str = "rule"  # "rule" | "summarizer" | "llm"
     bytes_size: int = 0
     tool_name: str | None = None
     excerpt_lines: tuple[str, ...] = ()
@@ -174,4 +174,4 @@ class EngineConfig:
     max_excerpt_line_length: int = 240
     max_summary_length: int = 1600
     max_invocation_bytes: int = 2048
-    lfm_max_input_bytes: int = 12288
+    max_input_bytes: int = 12288

@@ -260,7 +260,7 @@ class MemoryContextStore:
             if baseline is None:
                 return MutationResult(ok=False, error="verification_failed")
 
-            if choice is not None and choice.source == "lfm":
+            if choice is not None and choice.source == "llm":
                 original_lines = original.splitlines()
                 required = tuple(original_lines[index] for index in required_evidence_indexes(original_lines))
                 summary = validate_summary_text(original, choice.summary_text, required, invocation=invocation)
@@ -268,7 +268,7 @@ class MemoryContextStore:
                         or not excerpts_are_exact(original, choice.lines) or summary is None):
                     choice = baseline
                 else:
-                    choice = SpanChoice(required, "lfm", summary)
+                    choice = SpanChoice(required, "llm", summary)
             elif (choice is None or not set(baseline.lines).issubset(choice.lines)
                     or not excerpts_are_exact(original, choice.lines)):
                 choice = baseline
@@ -282,7 +282,7 @@ class MemoryContextStore:
                 options_omitted=options_omitted,
             )
 
-            if (choice.source == "lfm"
+            if (choice.source == "llm"
                     and len(rendered.encode("utf-8")) > len(original.encode("utf-8")) * 0.8):
                 choice = baseline
                 rendered = render_compaction(item_id, choice.lines)
@@ -310,10 +310,10 @@ class MemoryContextStore:
                 expires_at=moment + self.ttl_seconds,
                 tool_name=tool_name,
                 compaction_source=choice.source,
-                invocation_snapshot=copy.deepcopy(invocation) if choice.source == "lfm" else None,
-                invocation_digest=digest if choice.source == "lfm" else None,
+                invocation_snapshot=copy.deepcopy(invocation) if choice.source == "llm" else None,
+                invocation_digest=digest if choice.source == "llm" else None,
                 context_hint=None,
-                invocation_options_omitted=options_omitted if choice.source == "lfm" else False,
+                invocation_options_omitted=options_omitted if choice.source == "llm" else False,
             )
 
             if self._item_size(item) > self._items.maxsize - self._items.currsize:

@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 import tomllib
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from context_hide.policy import _EXIT_CLAIM, verified_facts
-from context_hide.transport import LFMUnavailable, OnCall
+from context_hide.transport import OnCall, SummarizerError, SummarizerUnavailable
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
     "Summarize recorded tool output in concise English. Return only JSON with one summary string. "
@@ -110,7 +115,7 @@ def strip_consecutive_numbering(text: str) -> str:
     """Drop ``N|`` line prefixes when every line is numbered consecutively.
 
     ``read_file`` prefixes each returned line with its line number; the numbers
-    are transport noise, and the LFM packet already removes them. Rule-based
+    are transport noise, and the model-summary packet removes them. Rule-based
     excerpt selection uses the same rule so both paths read the same text.
     """
     lines = text.splitlines()
@@ -313,15 +318,15 @@ def verify_exit_claims(source: str, summary_text: str) -> bool:
 @dataclass(frozen=True)
 class SummarizerConfig:
     """Configuration parameters for pluggable summarizer."""
-    model: str = "lfm2.5-thinking:latest"
+    model: str = ""
     max_input_chars: int = 50_000
     max_input_bytes: int = 12_288
     max_output_tokens: int = 384
     timeout_seconds: int = 60
 
 
-class LFMSummarizer:
-    """Prompt-isolated summary requester delegating to an injected generate callable."""
+class ModelSummarizer:
+    """Prompt-isolated summary requester delegating to an injected model transport."""
 
     def __init__(
         self,
@@ -335,11 +340,11 @@ class LFMSummarizer:
             self._config = config
         elif settings is not None:
             self._config = SummarizerConfig(
-                model=getattr(settings, "lfm_model", "lfm2.5-thinking:latest"),
-                max_input_chars=getattr(settings, "lfm_max_input_chars", 50_000),
-                max_input_bytes=getattr(settings, "lfm_max_input_bytes", 12_288),
-                max_output_tokens=getattr(settings, "lfm_max_output_tokens", 384),
-                timeout_seconds=getattr(settings, "lfm_timeout_seconds", 60),
+                model=getattr(settings, "model", ""),
+                max_input_chars=getattr(settings, "max_input_chars", 50_000),
+                max_input_bytes=getattr(settings, "max_input_bytes", 12_288),
+                max_output_tokens=getattr(settings, "max_output_tokens", 384),
+                timeout_seconds=getattr(settings, "timeout_seconds", 60),
             )
         else:
             self._config = SummarizerConfig()
@@ -369,11 +374,17 @@ class LFMSummarizer:
 
         if (len(user_content) > self._config.max_input_chars
                 or len((system_prompt + user_content).encode("utf-8")) > self._config.max_input_bytes):
-            raise LFMUnavailable("input_too_large")
+            logger.info(
+                "context-hide summarizer call=false latency_ms=0 "
+                "completion_tokens=0 error_code=input_too_large"
+            )
+            raise SummarizerUnavailable("input_too_large")
 
         if on_call is not None:
             on_call()
 
+        started = time.monotonic()
+        completion_tokens = 0
         try:
             result = await self._generate(
                 model=self._config.model,
@@ -386,7 +397,7 @@ class LFMSummarizer:
                 response_format={
                     "type": "json_schema",
                     "json_schema": {
-                        "name": "lfm_context_summary",
+                        "name": "context_hide_summary",
                         "strict": True,
                         "schema": {
                             "type": "object",
@@ -401,24 +412,64 @@ class LFMSummarizer:
                 reasoning={"effort": "none"},
                 timeout_seconds=self._config.timeout_seconds,
             )
+            if isinstance(result, dict):
+                usage = result.get("usage")
+                if isinstance(usage, dict):
+                    count = usage.get("completion_tokens")
+                    if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+                        completion_tokens = count
+
+            if (not isinstance(result, dict) or result.get("tool_calls")
+                    or result.get("finish_reason") == "length"):
+                raise SummarizerUnavailable("invalid_response")
+            text = result.get("text")
+            if not isinstance(text, str):
+                raise SummarizerUnavailable("missing_text")
+            try:
+                decoded = json.loads(text)
+            except (ValueError, TypeError):
+                raise SummarizerUnavailable("invalid_json") from None
+            if not isinstance(decoded, dict) or set(decoded) != {"summary"}:
+                raise SummarizerUnavailable("invalid_schema")
+
+            summary = validate_summary_text(
+                original, decoded, required_evidence, invocation=invocation,
+            )
+            if summary is None:
+                raise SummarizerUnavailable("verification_failed")
         except Exception as exc:
-            code = getattr(exc, "code", None)
-            reason = code if isinstance(code, str) and code else "request_failed"
-            raise LFMUnavailable(reason) from None
+            reason = exc.reason if isinstance(exc, SummarizerError) else (
+                getattr(exc, "reason", None) or getattr(exc, "code", None)
+            )
+            if not isinstance(reason, str) or not re.fullmatch(r"[a-z0-9_]{1,64}", reason):
+                reason = "request_failed"
+            latency_ms = max(0, int((time.monotonic() - started) * 1000))
+            logger.info(
+                "context-hide summarizer call=true latency_ms=%d "
+                "completion_tokens=%d error_code=%s",
+                latency_ms,
+                completion_tokens,
+                reason,
+            )
+            raise SummarizerUnavailable(reason) from None
 
-        if not isinstance(result, dict) or result.get("tool_calls") or result.get("finish_reason") == "length":
-            raise LFMUnavailable("invalid_response")
-        text = result.get("text")
-        if not isinstance(text, str):
-            raise LFMUnavailable("missing_text")
-        try:
-            decoded = json.loads(text)
-        except (ValueError, TypeError):
-            raise LFMUnavailable("invalid_json") from None
-        if not isinstance(decoded, dict) or set(decoded) != {"summary"}:
-            raise LFMUnavailable("invalid_schema")
-
-        summary = validate_summary_text(original, decoded, required_evidence, invocation=invocation)
-        if summary is None:
-            raise LFMUnavailable("verification_failed")
+        latency_ms = max(0, int((time.monotonic() - started) * 1000))
+        logger.info(
+            "context-hide summarizer call=true latency_ms=%d "
+            "completion_tokens=%d error_code=none",
+            latency_ms,
+            completion_tokens,
+        )
         return summary
+
+
+def __getattr__(name: str) -> Any:
+    """Expose the former model-specific summarizer name as a deprecated alias."""
+    if name == "LFMSummarizer":
+        warnings.warn(
+            "LFMSummarizer is deprecated; use ModelSummarizer",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return ModelSummarizer
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

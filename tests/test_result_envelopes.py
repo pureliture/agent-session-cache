@@ -8,13 +8,13 @@ from typing import Any
 import pytest
 
 from context_hide.summary import (
-    LFMSummarizer,
+    ModelSummarizer,
     SummarizerConfig,
     _SYSTEM_PROMPT,
     prepare_result_source,
     validate_summary_text,
 )
-from context_hide.transport import LFMUnavailable
+from context_hide.transport import SummarizerUnavailable
 
 CONFIG = '''[project]
 name = "cedar-api"
@@ -81,7 +81,7 @@ def test_content_envelope_is_decoded_without_line_number_noise():
             )
         }
 
-    summarizer = LFMSummarizer(generate=generate, config=SummarizerConfig())
+    summarizer = ModelSummarizer(generate=generate, config=SummarizerConfig())
     asyncio.run(
         summarizer.summarize(
             ENVELOPES[0][1],
@@ -165,9 +165,9 @@ def test_decode_does_not_bypass_original_input_budget():
         calls.append(kwargs)
         return {"text": '{"summary":"anything"}'}
 
-    with pytest.raises(LFMUnavailable, match="input_too_large"):
+    with pytest.raises(SummarizerUnavailable, match="input_too_large"):
         asyncio.run(
-            LFMSummarizer(generate=generate, config=config).summarize(
+            ModelSummarizer(generate=generate, config=config).summarize(
                 source, (), lambda: None, invocation={}
             )
         )

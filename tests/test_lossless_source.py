@@ -7,7 +7,7 @@ import json
 import pytest
 
 from context_hide.summary import (
-    LFMSummarizer,
+    ModelSummarizer,
     SummarizerConfig,
     prepare_result_source,
     restore_lossless_source,
@@ -90,7 +90,7 @@ def test_encoded_source_never_sends_invocation_or_context():
         calls.append(kwargs)
         return {"text": '{"summary":"cobalt-engine uses exact-name matching."}'}
 
-    summarizer = LFMSummarizer(generate=generate, config=SummarizerConfig())
+    summarizer = ModelSummarizer(generate=generate, config=SummarizerConfig())
     asyncio.run(
         summarizer.summarize(
             source,

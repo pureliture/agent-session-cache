@@ -32,12 +32,9 @@ code actually read):
 
 Decisions recorded here (first-version scope):
 
-- Summarization is rule-only by default: the plugin creates the engine
-  without an external summarizer, so no model call, no credentials,
-  and no extra cost happen unless an operator explicitly wires one.
-  When an LFM summarizer is added later it must be a separate local
-  call, never the main-model path (`ctx.llm`), to keep usage, auth,
-  and trust boundaries apart and keep fail-open simple.
+- Summarization is rule-only by default. An operator may opt in to a
+  separately configured loopback OpenAI-compatible model endpoint; the
+  plugin never uses Hermes' main model (`ctx.llm`) or a cloud fallback.
 - `branch_scope` is `"unknown"`: Hermes exposes no exact branch API
   to the plugin, so no full fork isolation is claimed. A compression
   rotation issues a new `session_id`, which naturally starts a fresh
@@ -64,6 +61,9 @@ from .presentation import PresentationRegistry, decorate_items
 from .session import SessionTranscriptStore
 from context_hide.engine import ContextHideEngine
 from context_hide.model import Scope
+from context_hide.openai_compatible import OpenAICompatibleTransport
+from context_hide.summary import ModelSummarizer, SummarizerConfig
+from context_hide.transport import Summarizer, SummarizerError
 
 logger = logging.getLogger(__name__)
 
@@ -237,12 +237,62 @@ class PluginState:
     """Live per-registration plugin state (one per Hermes process load)."""
 
     engine: ContextHideEngine = field(default_factory=ContextHideEngine)
+    summarizer: Summarizer | None = None
     store: SessionTranscriptStore = field(default_factory=SessionTranscriptStore)
     presentations: PresentationRegistry = field(default_factory=PresentationRegistry)
     profile: str = "default"
     is_enabled: Callable[[], bool] = field(default=lambda: False)
     count_middlewares: Callable[[], int] = field(
         default=_default_count_llm_middlewares)
+
+
+def _make_configured_summarizer(ctx: Any) -> Summarizer | None:
+    """Create only an explicitly configured local model summarizer."""
+    get_config = getattr(ctx, "get_config", None)
+    if not callable(get_config):
+        return None
+
+    def setting(name: str, default: Any) -> Any:
+        try:
+            return get_config(name, default)
+        except Exception:
+            return default
+
+    mode = setting("summary_mode", "rules")
+    if mode == "rules":
+        return None
+    if mode != "llm":
+        logger.warning("context-hide summarizer disabled error_code=invalid_mode")
+        return None
+
+    base_url = setting("base_url", "")
+    model = setting("model", "")
+    timeout_seconds = setting("timeout_seconds", 60)
+    max_input_bytes = setting("max_input_bytes", 12_288)
+    max_output_tokens = setting("max_output_tokens", 384)
+    if not isinstance(base_url, str) or not base_url.strip() or not isinstance(model, str) or not model.strip():
+        logger.warning("context-hide summarizer disabled error_code=invalid_configuration")
+        return None
+    for value in (timeout_seconds, max_input_bytes, max_output_tokens):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            logger.warning("context-hide summarizer disabled error_code=invalid_configuration")
+            return None
+
+    try:
+        transport = OpenAICompatibleTransport(base_url)
+    except SummarizerError as exc:
+        logger.warning(
+            "context-hide summarizer disabled error_code=%s", exc.reason)
+        return None
+    return ModelSummarizer(
+        generate=transport.generate,
+        config=SummarizerConfig(
+            model=model,
+            timeout_seconds=timeout_seconds,
+            max_input_bytes=max_input_bytes,
+            max_output_tokens=max_output_tokens,
+        ),
+    )
 
 
 def scope_for(state: PluginState, session_id: Any) -> Scope | None:
@@ -278,7 +328,10 @@ def make_hide_handler(state: PluginState) -> Callable[..., str]:
         scope = scope_for(state, session_id)
         if scope is None:
             return _dump({"ok": False, "error": "not_found"})
-        result = _engine_hide(state.engine, state.store, scope, target.strip())
+        result = _engine_hide(
+            state.engine, state.store, scope, target.strip(),
+            summarizer=state.summarizer,
+        )
         if not result.ok or result.plan is None:
             return _dump({"ok": False, "error": result.error or "not_found"})
         original_bytes = 0
@@ -441,7 +494,11 @@ def register(ctx: Any) -> PluginState:
         except Exception:
             return False
 
-    state = PluginState(profile=profile, is_enabled=_is_enabled)
+    state = PluginState(
+        profile=profile,
+        is_enabled=_is_enabled,
+        summarizer=_make_configured_summarizer(ctx),
+    )
     ctx.register_tool(
         name=HIDE_TOOL,
         toolset=TOOLSET,

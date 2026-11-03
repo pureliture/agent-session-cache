@@ -22,3 +22,28 @@ config_schema:
     type: bool
     default: false
     description: Enable hiding and request rewriting. Keep false until a verified session turns it on.
+  summary_mode:
+    type: str
+    default: rules
+    choices: [rules, llm]
+    description: Use conservative rules by default, or an explicitly configured local model.
+  base_url:
+    type: str
+    default: ""
+    description: Loopback-only OpenAI-compatible API base URL, usually ending in /v1. No default endpoint is selected.
+  model:
+    type: str
+    default: ""
+    description: Exact model ID sent to the configured local endpoint; required when summary_mode is llm.
+  timeout_seconds:
+    type: int
+    default: 60
+    description: Maximum time allowed for one local summarization request.
+  max_input_bytes:
+    type: int
+    default: 12288
+    description: Maximum UTF-8 bytes sent to the local summarizer.
+  max_output_tokens:
+    type: int
+    default: 384
+    description: Maximum generated tokens requested from the local summarizer.

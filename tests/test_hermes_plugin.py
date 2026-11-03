@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+from pathlib import Path
 
 from _adapter_loader import hermes_adapter as _load_hermes_adapter
 
@@ -252,3 +253,80 @@ def test_bridge_collision_set_matches_bridge_contract():
     assert plugin.bridge_should_yield(["terminal", "read_file"]) is False
     assert plugin.bridge_should_yield([]) is False
     assert plugin.bridge_should_yield(None) is False
+
+
+def test_llm_settings_build_summarizer_and_pass_it_through_hide_handler(monkeypatch):
+    observed: dict = {"requests": []}
+
+    class FakeTransport:
+        def __init__(self, base_url: str):
+            observed["base_url"] = base_url
+
+        async def generate(self, **request):
+            observed["requests"].append(request)
+            return {
+                "text": json.dumps({
+                    "summary": (
+                        "id: 01234567-89ab-cdef-0123-456789abcdef; "
+                        "results/output.json generated successfully."
+                    )
+                }),
+                "finish_reason": "stop",
+                "usage": {"completion_tokens": 18},
+            }
+
+    monkeypatch.setattr(plugin, "OpenAICompatibleTransport", FakeTransport, raising=False)
+    ctx = _enabled_ctx(
+        summary_mode="llm",
+        base_url="http://127.0.0.1/v1",
+        model="mlx-community/LFM3-1.7B-OptiQ-4bit:no-think",
+        timeout_seconds=23,
+        max_input_bytes=4096,
+        max_output_tokens=128,
+    )
+    state = plugin.register(ctx)
+    assert state.summarizer is not None
+
+    body = _long_body()
+    mw = ctx.middlewares["llm_request"][0]
+    mw(**_mw_kwargs(_codex_request(body), "sess-llm", "codex_responses"))
+    hidden = json.loads(ctx.tools["hide_context"]["handler"](
+        {"tool_call_id": "call_1"}, session_id="sess-llm"))
+
+    assert hidden["ok"] is True
+    assert observed["base_url"] == "http://127.0.0.1/v1"
+    assert len(observed["requests"]) == 1
+    assert observed["requests"][0]["model"] == (
+        "mlx-community/LFM3-1.7B-OptiQ-4bit:no-think"
+    )
+    assert observed["requests"][0]["timeout_seconds"] == 23
+    assert observed["requests"][0]["max_tokens"] == 128
+
+
+def test_rules_mode_default_does_not_create_local_transport(monkeypatch):
+    constructions: list[str] = []
+
+    class UnexpectedTransport:
+        def __init__(self, base_url: str):
+            constructions.append(base_url)
+            raise AssertionError("rules mode must not construct a model transport")
+
+    monkeypatch.setattr(plugin, "OpenAICompatibleTransport", UnexpectedTransport, raising=False)
+    state = plugin.register(_enabled_ctx())
+
+    assert state.summarizer is None
+    assert constructions == []
+
+
+def test_manifest_summarizer_settings_are_explicit_and_rules_default():
+    manifest = (Path(__file__).resolve().parents[1] / "plugin.yaml").read_text()
+    expected = (
+        "  summary_mode:\n    type: str\n    default: rules\n    choices: [rules, llm]",
+        '  base_url:\n    type: str\n    default: ""',
+        '  model:\n    type: str\n    default: ""',
+        "  timeout_seconds:\n    type: int\n    default: 60",
+        "  max_input_bytes:\n    type: int\n    default: 12288",
+        "  max_output_tokens:\n    type: int\n    default: 384",
+    )
+    for setting in expected:
+        assert setting in manifest
